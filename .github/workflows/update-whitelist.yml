@@ -1,0 +1,30 @@
+name: update-whitelist
+
+on:
+  schedule:
+    - cron: "0 20 * * 6"
+    
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Generate whitelist
+      run: |
+        curl -o whitelist.txt https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
+        sed -i '/^#/d' whitelist.txt
+        sed -i 's/server=\//@@||/g' whitelist.txt
+        sed -i 's/\/.*//g' whitelist.txt
+        sed -i '1i\[AutoProxy]' whitelist.txt
+        
+    - name: Commit files
+      run: |
+        git config user.name lindongbin
+        git config user.email lin.crk@gmail.com
+        git checkout --orphan whitelist
+        git rm -rf .
+        git add "whitelist.txt"
+        git commit -m "Update whitelist.txt"
+        git push --force origin whitelist:whitelist
