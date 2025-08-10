@@ -1,1 +1,1 @@
-# aboutconfig
+https://pd.qq.com/g/aboutconfig
