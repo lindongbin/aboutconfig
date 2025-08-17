@@ -7,6 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
     - uses: actions/checkout@v4
@@ -14,10 +16,10 @@ jobs:
     - name: Generate whitelist
       run: |
         curl -o whitelist.txt https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
-        sed -i '/^#/d' whitelist.txt
-        sed -i 's/server=\//@@||/g' whitelist.txt
-        sed -i 's/\/.*//g' whitelist.txt
-        sed -i '1i\[AutoProxy]' whitelist.txt
+        sed -i -e '/^#/d' \
+               -e 's/server=\//@@||/g' \
+               -e 's/\/.*//g' \
+               -e '1i\[AutoProxy]' whitelist.txt
         
     - name: Commit files
       run: |
