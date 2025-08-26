@@ -101,6 +101,9 @@
                     let iconURL = iconCache.get(engine);
                     if (!iconURL) {
                         iconURL = await engine.getIconURL();
+                        if (!iconURL) {
+                            iconURL = 'chrome://global/skin/icons/search-glass.svg';
+                        }
                         iconCache.set(engine, iconURL);
                     }
                     if (iconURL) {
@@ -174,10 +177,34 @@
             }
         }
 
+        function onSearchSubmit() {
+            if (cfg.resetEngineAfterSearch) {
+                setTimeout(resetEngine, 0);
+            }
+        }
+
+        if (gURLBar && gURLBar._recordSearch) {
+            const original_recordSearch = gURLBar._recordSearch;
+            gURLBar._recordSearch = function(...args) {
+                const result = original_recordSearch.apply(this, args);
+                onSearchSubmit();
+                return result;
+            };
+        }
+
+        if (searchbar && searchbar.handleSearchCommandWhere) {
+            const originalHandleSearchCommandWhere = searchbar.handleSearchCommandWhere;
+            searchbar.handleSearchCommandWhere = function(aEvent, aEngine, aWhere, aParams) {
+                const result = originalHandleSearchCommandWhere.call(this, aEvent, aEngine, aWhere, aParams);
+                onSearchSubmit();
+                return result;
+            };
+        }
+
         function contextClick() {
             if (cfg.syncSearchOnContextClick && textbox) textbox.value = this.searchTerms || textbox.value;
             if (cfg.saveSearchHistoryOnContextClick) updateHistory();
-            if (cfg.resetEngineAfterSearch) setTimeout(resetEngine, 0);
+            onSearchSubmit();
         }
 
         async function updateMenuIcon() {
@@ -303,3 +330,4 @@
 
     runAfterStartup(initScript);
 })();
+
