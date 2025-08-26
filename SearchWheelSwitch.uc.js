@@ -183,21 +183,31 @@
             }
         }
 
-        if (gURLBar && gURLBar._recordSearch) {
-            const original_recordSearch = gURLBar._recordSearch;
-            gURLBar._recordSearch = function(...args) {
-                const result = original_recordSearch.apply(this, args);
-                onSearchSubmit();
-                return result;
-            };
+        if (cfg.resetEngineAfterSearch) {
+            if (gURLBar && gURLBar._recordSearch) {
+                const original_recordSearch = gURLBar._recordSearch;
+                gURLBar._recordSearch = function(...args) {
+                    const result = original_recordSearch.apply(this, args);
+                    onSearchSubmit();
+                    return result;
+                };
+            }
+
+            if (searchbar && searchbar.handleSearchCommandWhere) {
+                const originalHandleSearchCommandWhere = searchbar.handleSearchCommandWhere;
+                searchbar.handleSearchCommandWhere = function(aEvent, aEngine, aWhere, aParams) {
+                    const result = originalHandleSearchCommandWhere.call(this, aEvent, aEngine, aWhere, aParams);
+                    onSearchSubmit();
+                    return result;
+                };
+            }
         }
 
-        if (searchbar && searchbar.handleSearchCommandWhere) {
-            const originalHandleSearchCommandWhere = searchbar.handleSearchCommandWhere;
-            searchbar.handleSearchCommandWhere = function(aEvent, aEngine, aWhere, aParams) {
-                const result = originalHandleSearchCommandWhere.call(this, aEvent, aEngine, aWhere, aParams);
-                onSearchSubmit();
-                return result;
+        if (cfg.enableUrlbarWheelSwitch && gURLBar && gURLBar._updatePlaceholder) {
+            gURLBar._updatePlaceholder = function(engineName) {
+                if (engineName && !this.searchMode) {
+                    this._setPlaceholder(engineName);
+                }
             };
         }
 
@@ -330,4 +340,5 @@
 
     runAfterStartup(initScript);
 })();
+
 
