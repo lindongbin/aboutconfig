@@ -21,6 +21,7 @@
 
             resetEngineOnStartup: true,         // Firefox 启动完成时是否自动重置到默认搜索引擎
             scrollDirectionNormal: true,        // 滚轮方向映射：true=向下滚动切换到下一个引擎，false=相反
+            allowEngineLoopSwitch: false,       // 是否允许滚轮循环切换搜索引擎（false=到头停）
 
             enableSearchbarWheelSwitch: false,  // 搜索框滚轮切换开关
             enableUrlbarWheelSwitch: true,      // 地址栏滚轮切换开关
@@ -142,7 +143,14 @@
             const idx = engines.findIndex(e => e.name === cur.name);
             if (idx === -1) return;
 
-            const newIdx = (idx + dir + engines.length) % engines.length;
+            let newIdx = idx + dir;
+
+            if (cfg.allowEngineLoopSwitch) {
+                newIdx = (newIdx + engines.length) % engines.length;
+            } else {
+                if (newIdx < 0 || newIdx >= engines.length) return;
+            }
+
             await searchSvc.setDefault(engines[newIdx], Ci.nsISearchService.CHANGE_REASON_USER);
             clearAllCache();
 
@@ -297,11 +305,20 @@
             }, 100);
         }
 
+        let resizeTimer = null;
+        function handleWindowResize() {
+            if (resizeTimer) clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                handleAfterCustomization();
+            }, 200);
+        }
+
         function bindEvents() {
             eventListeners.forEach(({ element, config, event, handler }) => {
                 if (element && config) element.addEventListener(event, handler, false);
             });
             window.addEventListener('aftercustomization', handleAfterCustomization, false);
+            window.addEventListener('resize', handleWindowResize, false);
             window.addEventListener('unload', cleanup, false);
         }
 
@@ -312,6 +329,7 @@
                 if (element && config) element.removeEventListener(event, handler, false);
             });
             window.removeEventListener('aftercustomization', handleAfterCustomization, false);
+            window.removeEventListener('resize', handleWindowResize, false);
             Services.obs.removeObserver(obsSearchChange, "browser-search-engine-modified");
             Services.obs.removeObserver(obsInit, "browser-search-service");
             if (currentStyleNode) {
@@ -355,6 +373,3 @@
 
     runAfterStartup(initScript);
 })();
-
-
-
