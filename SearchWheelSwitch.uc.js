@@ -29,12 +29,12 @@
             throttleScrollSwitch: 100           // 滚轮切换节流间隔（毫秒）
         };
 
-        const searchbar = document.getElementById('searchbar');
-        const textbox = searchbar?.querySelector('.searchbar-textbox') || null;
-        const urlbar = document.getElementById('urlbar');
-        const ctxMenu = document.getElementById('context-searchselect');
-        const goBtn = document.querySelector('.search-go-button');
-        const searchIcon = searchbar?.querySelector('.searchbar-search-icon') || null;
+        let searchbar = document.getElementById('searchbar');
+        let textbox = searchbar?.querySelector('.searchbar-textbox') || null;
+        let urlbar = document.getElementById('urlbar');
+        let ctxMenu = document.getElementById('context-searchselect');
+        let goBtn = document.querySelector('.search-go-button');
+        let searchIcon = searchbar?.querySelector('.searchbar-search-icon') || null;
         const searchSvc = Services.search;
 
         let cachedEngines = null;
@@ -284,10 +284,24 @@
             { element: ctxMenu, config: cfg.enableContextMenuSwitch && cfg.syncSearchOnContextClick, event: 'click', handler: contextClick }
         ];
 
+        function handleAfterCustomization() {
+            searchbar = document.getElementById('searchbar');
+            textbox = searchbar?.querySelector('.searchbar-textbox');
+            searchIcon = searchbar?.querySelector('.searchbar-search-icon');
+            goBtn = searchbar?.querySelector('.search-go-button');
+            setTimeout(() => {
+                lastEngineName = null;
+                lastIconURI = null;
+                if (goBtn) goBtn.removeAttribute("hidden");
+                showEngine();
+            }, 100);
+        }
+
         function bindEvents() {
             eventListeners.forEach(({ element, config, event, handler }) => {
                 if (element && config) element.addEventListener(event, handler, false);
             });
+            window.addEventListener('aftercustomization', handleAfterCustomization, false);
             window.addEventListener('unload', cleanup, false);
         }
 
@@ -297,6 +311,7 @@
             eventListeners.forEach(({ element, config, event, handler }) => {
                 if (element && config) element.removeEventListener(event, handler, false);
             });
+            window.removeEventListener('aftercustomization', handleAfterCustomization, false);
             Services.obs.removeObserver(obsSearchChange, "browser-search-engine-modified");
             Services.obs.removeObserver(obsInit, "browser-search-service");
             if (currentStyleNode) {
@@ -340,5 +355,6 @@
 
     runAfterStartup(initScript);
 })();
+
 
 
