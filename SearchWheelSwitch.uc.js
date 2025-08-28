@@ -51,14 +51,11 @@
 
         function clearAllCache() {
             cachedEngines = null;
-            lastEngineUpdate = 0;
         }
 
         async function getCachedEngines() {
-            const now = Date.now();
-            if (!cachedEngines || now - lastEngineUpdate > CACHE_DURATION) {
+            if (!cachedEngines) {
                 cachedEngines = await searchSvc.getVisibleEngines();
-                lastEngineUpdate = now;
             }
             return cachedEngines;
         }
@@ -152,7 +149,6 @@
             }
 
             await searchSvc.setDefault(engines[newIdx], Ci.nsISearchService.CHANGE_REASON_USER);
-            clearAllCache();
 
             if (event.currentTarget.id === "urlbar" && gURLBar && gURLBar.value) {
                 gURLBar.search?.(gURLBar.value);
@@ -340,10 +336,13 @@
 
         function obsSearchChange(engine, topic, verb) {
             if (topic !== "browser-search-engine-modified") return;
-            if (verb !== "engine-current" && verb !== 'engine-default') return;
-            clearAllCache();
-            const task = () => showEngine().then(updateContextMenu);
-            window.requestIdleCallback ? requestIdleCallback(task) : setTimeout(task, 0);
+            if (["engine-added", "engine-removed", "engine-changed", "engine-loaded"].includes(verb)) {
+                clearAllCache(verb);
+            }
+            if (verb === "engine-current" || verb === "engine-default") {
+                const task = () => showEngine().then(updateContextMenu);
+                window.requestIdleCallback ? requestIdleCallback(task) : setTimeout(task, 0);
+            }
         }
 
         function obsInit(subject, topic, data) {
