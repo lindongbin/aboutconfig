@@ -26,7 +26,6 @@
             enableSearchbarWheelSwitch: false,  // 搜索框滚轮切换开关
             enableUrlbarWheelSwitch: true,      // 地址栏滚轮切换开关
 
-            debounceContextMenuUpdate: 50,      // 右键菜单防抖间隔（毫秒）
             throttleScrollSwitch: 100           // 滚轮切换节流间隔（毫秒）
         };
 
@@ -39,15 +38,13 @@
         const searchSvc = Services.search;
 
         let cachedEngines = null;
-        let lastEngineUpdate = 0;
-        const CACHE_DURATION = 5000;
         let updateMenuTimer = null;
         let switchEngineTimer = null;
 
         const iconCache = new WeakMap();
         let lastIconURI = null;
         let lastEngineName = null;
-        let currentStyleNode = null;
+        let lastMenuLabel = null;
 
         function clearAllCache() {
             cachedEngines = null;
@@ -221,62 +218,45 @@
             onSearchSubmit();
         }
 
-        async function updateMenuIcon() {
-            if (!ctxMenu || !searchSvc.defaultEngine || !cfg.showContextMenuIcon) return;
-            try {
-                const engine = searchSvc.defaultEngine;
-                let iconURL = iconCache.get(engine);
-                if (!iconURL) {
-                    iconURL = await engine.getIconURL();
-                    iconCache.set(engine, iconURL);
-                }
-                if (!iconURL) return;
-                if (iconURL === lastIconURI && currentStyleNode) return;
-
-                if (currentStyleNode) currentStyleNode.remove();
-
-                const styleText = `@namespace url(http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul);
-                    #context-searchselect:before{
-                        margin-inline-end: 8px;
-                        content:"";
-                        display:inline-block;
-                        width:16px;
-                        height:16px;
-                        background:url(${iconURL});
-                        background-size:contain!important
-                    }`;
-
-                const sspi = document.createProcessingInstruction(
-                    'xml-stylesheet',
-                    `type="text/css" href="data:text/css,${encodeURIComponent(styleText)}"`
-                );
-                document.insertBefore(sspi, document.documentElement);
-                currentStyleNode = sspi;
-                lastIconURI = iconURL;
-            } catch (e) {
-                console.error("更新右键菜单图标失败:", e);
-            }
-        }
-
-        function updateContextMenu() {
+        async function updateContextMenu() {
             if (!ctxMenu || !searchSvc.defaultEngine) return;
-            if (updateMenuTimer) clearTimeout(updateMenuTimer);
-
-            updateMenuTimer = setTimeout(async () => {
-                let text = ctxMenu.searchTerms || window.getSelection().toString();
-                if (text.length > 15) {
-                    let cutLen = 15;
-                    let code = text.charCodeAt(15);
-                    if (code >= 0xDC00 && code <= 0xDFFF) cutLen++;
-                    text = text.substr(0, cutLen) + '\u2026';
+            const engine = searchSvc.defaultEngine;
+            let text = ctxMenu.searchTerms || window.getSelection().toString();
+            if (text.length > 15) {
+                let cutLen = 15;
+                let code = text.charCodeAt(15);
+                if (code >= 0xDC00 && code <= 0xDFFF) cutLen++;
+                text = text.substr(0, cutLen) + '\u2026';
+            }
+            const newLabel = gNavigatorBundle.getFormattedString(
+                'contextMenuSearch',
+                [engine.name, text]
+            );
+            if (newLabel !== lastMenuLabel) {
+                ctxMenu.setAttribute('label', newLabel);
+                lastMenuLabel = newLabel;
+            }
+            if (!cfg.showContextMenuIcon) return;
+            let iconURL = iconCache.get(engine);
+            if (!iconURL) {
+                iconURL = await engine.getIconURL() || 'chrome://global/skin/icons/search-glass.svg';
+                iconCache.set(engine, iconURL);
+            }
+            document.querySelectorAll(`style[data-engine-style="${engine.name}"]`).forEach(node => node.remove());
+            const style = document.createElement('style');
+            style.dataset.engineStyle = engine.name;
+            style.textContent = `
+                #context-searchselect::before {
+                    margin-inline-end: 8px;
+                    content: "";
+                    display: inline-block;
+                    width: 16px;
+                    height: 16px;
+                    background: url(${iconURL});
+                    background-size: contain !important;
                 }
-
-                const label = gNavigatorBundle.getFormattedString('contextMenuSearch', [searchSvc.defaultEngine.name, text]);
-                ctxMenu.setAttribute('label', label);
-
-                if (cfg.enableContextMenuSwitch) await updateMenuIcon();
-                updateMenuTimer = null;
-            }, cfg.debounceContextMenuUpdate);
+            `;
+            document.head.appendChild(style);
         }
 
         const eventListeners = [
@@ -328,10 +308,7 @@
             window.removeEventListener('resize', handleWindowResize, false);
             Services.obs.removeObserver(obsSearchChange, "browser-search-engine-modified");
             Services.obs.removeObserver(obsInit, "browser-search-service");
-            if (currentStyleNode) {
-                currentStyleNode.remove();
-                currentStyleNode = null;
-            }
+            document.querySelectorAll('style[data-engine-style]').forEach(node => node.remove());
         }
 
         function obsSearchChange(engine, topic, verb) {
