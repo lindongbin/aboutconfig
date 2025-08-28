@@ -122,6 +122,8 @@
                 event.originalTarget !== ctxMenu &&
                 !event.originalTarget.closest('#urlbar')) return;
             if (event.currentTarget.id === "urlbar" && (isUrlbarHasContent() || gURLBar.searchMode)) return;
+            const targetRow = event.target.closest('.urlbarView-row');
+            if (targetRow && targetRow.getAttribute('type') !== 'search') return;
             if (switchEngineTimer) return;
 
             switchEngineTimer = setTimeout(() => { switchEngineTimer = null; }, cfg.throttleScrollSwitch);
