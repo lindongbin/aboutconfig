@@ -42,7 +42,6 @@
         let switchEngineTimer = null;
 
         const iconCache = new WeakMap();
-        let lastIconURI = null;
         let lastEngineName = null;
         let lastMenuLabel = null;
 
@@ -122,7 +121,7 @@
                 event.originalTarget.className !== 'searchbar-search-button' &&
                 event.originalTarget !== ctxMenu &&
                 !event.originalTarget.closest('#urlbar')) return;
-            if (event.currentTarget.id === "urlbar" && isUrlbarHasContent()) return;
+            if (event.currentTarget.id === "urlbar" && (isUrlbarHasContent() || gURLBar.searchMode)) return;
             if (switchEngineTimer) return;
 
             switchEngineTimer = setTimeout(() => { switchEngineTimer = null; }, cfg.throttleScrollSwitch);
@@ -275,7 +274,6 @@
             goBtn = searchbar?.querySelector('.search-go-button');
             setTimeout(() => {
                 lastEngineName = null;
-                lastIconURI = null;
                 if (goBtn) goBtn.removeAttribute("hidden");
                 showEngine();
             }, 100);
