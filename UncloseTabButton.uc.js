@@ -46,6 +46,7 @@
       const item = createXULElement(this.doc, 'menuitem', { className: 'menuitem-iconic', label });
       item.dataset.index = index;
       item.setAttribute('image', tab.image ?? 'chrome://global/skin/icons/defaultFavicon.svg');
+      item.setAttribute('tooltiptext', label);
       return item;
     };
 
