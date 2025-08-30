@@ -75,7 +75,7 @@
       const item = e.target.closest('menuitem');
       if (!item?.dataset.index) return;
       restoreClosedTab(this.doc, +item.dataset.index);
-      if (item.hasAttribute('closemenu')) this.updateItems();
+      if (item.hasAttribute('closemenu')) item.remove();
     };
   }
 
