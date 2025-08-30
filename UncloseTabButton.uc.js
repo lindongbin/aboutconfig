@@ -51,16 +51,18 @@
     };
 
     updateItems = () => {
-      const fragment = this.doc.createDocumentFragment();
-      const count = SessionStore.getClosedTabCount(this.win);
-      if (!count) {
-        fragment.appendChild(createXULElement(this.doc, 'menuitem', { label: '没有最近关闭的标签页', disabled: true }));
-      } else {
-        const tabs = SessionStore.getClosedTabDataForWindow(this.win)
-          .slice(0, Services.prefs.getIntPref('browser.sessionstore.max_tabs_undo'));
-        tabs.forEach((tab, i) => fragment.appendChild(this.createMenuItem(tab, i)));
-      }
-      this.#popup.replaceChildren(fragment);
+      this.doc.defaultView.requestAnimationFrame(() => {
+        const fragment = this.doc.createDocumentFragment();
+        const count = SessionStore.getClosedTabCount(this.win);
+        if (!count) {
+          fragment.appendChild(createXULElement(this.doc, 'menuitem', { label: '没有最近关闭的标签页', disabled: true }));
+        } else {
+          const tabs = SessionStore.getClosedTabDataForWindow(this.win)
+            .slice(0, Services.prefs.getIntPref('browser.sessionstore.max_tabs_undo'));
+          tabs.forEach((tab, i) => fragment.appendChild(this.createMenuItem(tab, i)));
+        }
+        this.#popup.replaceChildren(fragment);
+      });
     };
 
     onMouseDown = e => {
