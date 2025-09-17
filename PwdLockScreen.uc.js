@@ -3,8 +3,10 @@
 
     const CUSTOM_PASSWORD = "123456";
     const LOCK_STATE_PREF = "browser.lock.isLocked";
+    const LOCK_ALWAYS_PREF = "browser.lock.alwaysLock";
     
     let isLocked = Services.prefs.getBoolPref(LOCK_STATE_PREF, false);
+    let alwaysLock = Services.prefs.getBoolPref(LOCK_ALWAYS_PREF, false);
     let originalTitle = document.title;
 
     function createElement(tag, props = {}, styles = {}) {
@@ -33,6 +35,10 @@
         button: {
             padding: '8px 20px', background: '#d70022', color: 'white',
             border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '14px'
+        },
+        checkboxContainer: {
+            display: 'flex', alignItems: 'center', gap: '8px',
+            color: 'var(--arrowpanel-color, black)'
         }
     };
 
@@ -52,18 +58,18 @@
         }
     }
 
-    function showPasswordPrompt() {
+    function showPasswordPrompt(options = { allowChangeAlwaysLock: true }) {
         return new Promise((resolve) => {
             const dialog = createElement('dialog', {}, styles.dialog);
             const container = createElement('div', {}, styles.container);
             
             const title = createElement('h3', {
                 textContent: 'Firefox 已锁定'
-            }, { margin: '0', color: 'var(--arrowpanel-color, black)' });
+            }, { margin: '0', color: 'var(--arrowpanel-color, black)', fontSize: '24px' });
 
             const message = createElement('p', {
                 textContent: '请输入密码以解锁Firefox:'
-            }, { margin: '0', textAlign: 'center' });
+            }, { margin: '0', textAlign: 'center', fontSize: '18px' });
 
             const input = createElement('input', {
                 type: 'password',
@@ -73,12 +79,29 @@
             const unlockBtn = createElement('button', {
                 textContent: '解锁'
             }, styles.button);
+
+            const checkboxContainer = createElement('label', {}, styles.checkboxContainer);
+            const checkbox = createElement('input', {
+                type: 'checkbox',
+                checked: alwaysLock,
+                disabled: !options.allowChangeAlwaysLock
+            });
+            const checkboxLabel = createElement('span', {
+                textContent: '每次启动时都锁定'
+            });
+            checkboxContainer.append(checkbox, checkboxLabel);
+
+            if (options.allowChangeAlwaysLock) {
+                checkbox.addEventListener('change', () => {
+                    Services.prefs.setBoolPref(LOCK_ALWAYS_PREF, checkbox.checked);
+                    alwaysLock = checkbox.checked;
+                });
+            }
             
             const handlers = {
                 cleanup() {
                     document.removeEventListener('keydown', handlers.keyHandler, true);
-                    const urlbar = document.getElementById('urlbar-container');
-                    if (urlbar) urlbar.style.visibility = 'visible';
+                    titleObserver.disconnect();
                     dialog.remove();
                     setLockState(false);
                 },
@@ -111,12 +134,9 @@
                 }
             };
 
-            container.append(title, message, input, unlockBtn);
+            container.append(title, message, input, unlockBtn, checkboxContainer);
             dialog.appendChild(container);
             document.documentElement.appendChild(dialog);
-
-            const urlbar = document.getElementById('urlbar-container');
-            if (urlbar) urlbar.style.visibility = 'hidden';
 
             document.addEventListener('keydown', handlers.keyHandler, true);
             unlockBtn.addEventListener('click', handlers.verify);
@@ -144,7 +164,7 @@
             e.preventDefault();
             setLockState(true);
             try {
-                const success = await showPasswordPrompt();
+                const success = await showPasswordPrompt({ allowChangeAlwaysLock: true });
                 if (success) console.log('Firefox已解锁');
             } catch {
                 console.log('解锁失败');
@@ -152,14 +172,17 @@
         }
     });
 
-    if (isLocked) {
+    if (alwaysLock || isLocked) {
+        setLockState(true);
         document.title = "Firefox";
-        try {
-            const success = await showPasswordPrompt();
-            if (success) console.log('Firefox启动后已解锁');
-        } catch {
-            console.log('解锁失败');
-        }
+        setTimeout(async () => {
+            try {
+                const success = await showPasswordPrompt({ allowChangeAlwaysLock: false });
+                if (success) console.log('Firefox启动后已解锁');
+            } catch {
+                console.log('解锁失败');
+            }
+        }, 0);
     }
 
     console.log('Firefox锁定脚本已加载，按Ctrl+L锁定浏览器');
