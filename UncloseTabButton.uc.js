@@ -57,7 +57,7 @@
         if (!count) {
           fragment.appendChild(createXULElement(this.doc, 'menuitem', { label: '没有最近关闭的标签页', disabled: true }));
         } else {
-          const tabs = SessionStore.getClosedTabDataForWindow(this.win)
+          const tabs = [...SessionStore.getClosedTabDataForWindow(this.win), ...SessionStore.getClosedTabDataFromClosedWindows()]
             .slice(0, Services.prefs.getIntPref('browser.sessionstore.max_tabs_undo'));
           tabs.forEach((tab, i) => fragment.appendChild(this.createMenuItem(tab, i)));
         }
