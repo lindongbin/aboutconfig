@@ -9,7 +9,7 @@
             if (view?.close) {
                 const { close } = view;
                 view.close = () => {};
-                queueMicrotask(() => view.close = close);
+                setTimeout(() => view.close = close, 100);
             }
             return gBrowser.selectedTab.isEmpty ? "current" : "tab";
         }
