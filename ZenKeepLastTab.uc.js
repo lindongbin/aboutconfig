@@ -8,7 +8,7 @@
   );
 
   gBrowser.tabContainer.addEventListener('TabClose', function() {
-    if (gBrowser.tabs.length === 2) {
+    if (gBrowser.visibleTabs.length === 0) {
       const newTab = gBrowser.addTab(AboutNewTab.newTabURL, {
         triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal()
       });
