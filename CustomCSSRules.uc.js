@@ -3,6 +3,8 @@
 
   const styleMap = new Map();
   const itemElements = new Map();
+  const styleSheetService = Cc["@mozilla.org/content/style-sheet-service;1"].getService(Ci.nsIStyleSheetService);
+
   let mainDialog, editDialog, deleteDialog;
   let editController, deleteController;
   let rulesInMemory = null;
@@ -61,42 +63,18 @@
     }
   }
 
-  function applyBaseCSS() {
-    if (!document.getElementById('ucss-base-style')) {
-      const style = document.createElement('style');
-      style.id = 'ucss-base-style';
-      style.textContent = baseCSS;
-      document.head.appendChild(style);
-    }
-  }
-
-  function syncStyleElement(key, rule) {
-    const existing = styleMap.get(key);
-    if (!rule || !rule.enabled) {
-      existing?.remove();
-      styleMap.delete(key);
-      return;
-    }
-    if (existing) {
-      if (existing.textContent !== rule.css) existing.textContent = rule.css;
-    } else {
-      const style = document.createElement('style');
-      style.className = 'ucss-style-rule';
-      style.dataset.key = key;
-      style.textContent = rule.css;
-      document.head.appendChild(style);
-      styleMap.set(key, style);
-    }
-  }
-
-  async function applyCSS(key) {
-    if (!rulesInMemory) return;
-    if (key) {
-      syncStyleElement(key, rulesInMemory[key]);
-    } else {
-      for (const [k, rule] of Object.entries(rulesInMemory)) {
-        syncStyleElement(k, rule);
+  async function applyCSS(rules) {
+    if (!rulesInMemory && !rules) return;
+    const target = rules || rulesInMemory;
+    for (const [key, rule] of Object.entries(target)) {
+      if (styleMap.has(key)) {  
+        styleSheetService.unregisterSheet(styleMap.get(key), styleSheetService.USER_SHEET);  
+        styleMap.delete(key);  
       }
+      if (!rule || !rule.enabled) continue;
+      const uri = Services.io.newURI(`data:text/css;charset=utf-8,${encodeURIComponent(rule.css)}`);
+      styleSheetService.loadAndRegisterSheet(uri, styleSheetService.USER_SHEET);
+      styleMap.set(key, uri);
     }
   }
 
@@ -159,7 +137,7 @@
     deleteBtn.className = 'ucss-delete-btn';
     checkbox.addEventListener('change', async () => {
       rulesInMemory[key].enabled = checkbox.checked;
-      await applyCSS(key);
+      await applyCSS({ [key]: rulesInMemory[key] });
     });
     div.append(checkbox, labelEl, editBtn, deleteBtn);
     return { container: div, checkbox, labelEl };
@@ -233,7 +211,7 @@
         const label = labelInput.value.trim();
         if (!label) return;
         rulesInMemory[key] = { label, enabled: true, css: textarea.value };
-        await applyCSS(key);
+        await applyCSS({ [key]: rulesInMemory[key] });
         dialog.close();
         await updateDialogDOM();
       });
@@ -253,7 +231,10 @@
       dialog.appendChild(msg);
       const okBtn = createButton('确定', async () => {
         delete rulesInMemory[key];
-        await applyCSS(key);
+        if (styleMap.has(key)) {  
+          styleSheetService.unregisterSheet(styleMap.get(key), styleSheetService.USER_SHEET);  
+          styleMap.delete(key);  
+        }
         dialog.close();
         await updateDialogDOM();
       });
@@ -342,8 +323,8 @@
   }
 
   async function init() {
-    applyBaseCSS();
     rulesInMemory = await getRulesFromFile();
+    await applyCSS({ '__BASE_CSS__': { enabled: true, css: baseCSS } });
     await applyCSS();
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', addMenuItemWhenPopupReady, { once: true });
@@ -355,14 +336,14 @@
   init();
 
   window.addEventListener('unload', () => {
-    styleMap.forEach(s => s.remove());
+    for (const uri of styleMap.values()) {
+      styleSheetService.unregisterSheet(uri, styleSheetService.USER_SHEET);
+    }
     styleMap.clear();
     mainDialog?.remove();
     editDialog?.remove();
     deleteDialog?.remove();
     document.getElementById('appMenu-ucss-button')?.remove();
-    document.getElementById('ucss-base-style')?.remove();
-    document.querySelectorAll('.ucss-style-rule').forEach(s => s.remove());
     itemElements.clear();
   }, { once: true });
 })();
