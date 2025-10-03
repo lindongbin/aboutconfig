@@ -15,4 +15,6 @@
         }
         return originalWhereToOpen.call(this, event);
     };
+
+    return { cleanup: () => { gURLBar._whereToOpen = originalWhereToOpen; } };
 })();
