@@ -12,4 +12,5 @@
         }
         return originalWhereToOpenLink.call(this, event, ignoreButton, ignoreAlt);
     };
+    return { cleanup: () => { BrowserUtils.whereToOpenLink = originalWhereToOpenLink; } };
 })();
