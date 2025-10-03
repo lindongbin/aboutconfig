@@ -3,6 +3,9 @@
 (function() {
   'use strict';
 
+  const abortController = new AbortController();
+  const { signal } = abortController;
+
   const { AboutNewTab } = ChromeUtils.importESModule(
     "resource:///modules/AboutNewTab.sys.mjs"
   );
@@ -14,5 +17,7 @@
       });
       gBrowser.selectedTab = newTab;
     }
-  });
+  }, { signal });
+
+  return { cleanup: () => abortController.abort() };
 })();
