@@ -1,6 +1,9 @@
 (() => {
   'use strict';
 
+  const abortController = new AbortController();
+  const { signal } = abortController;
+
   const createXULElement = (doc, tag, props = {}) => {
     const el = doc.createXULElement(tag);
     Object.assign(el, props);
@@ -34,9 +37,9 @@
       this.win = doc.defaultView;
       this.#popup = doc.getElementById('undo-close-tab-popup') ?? createXULElement(doc, 'menupopup', { id: 'undo-close-tab-popup', style: 'max-width:300px;' });
       doc.documentElement.appendChild(this.#popup);
-      this.#popup.addEventListener('popupshowing', () => this.updateItems());
-      this.#popup.addEventListener('command', e => this.onCommand(e));
-      this.#popup.addEventListener('mousedown', e => this.onMouseDown(e));
+      this.#popup.addEventListener('popupshowing', () => this.updateItems(), { signal });
+      this.#popup.addEventListener('command', e => this.onCommand(e), { signal });
+      this.#popup.addEventListener('mousedown', e => this.onMouseDown(e), { signal });
     }
 
     get popup() { return this.#popup; }
@@ -93,11 +96,11 @@
         image: 'chrome://global/skin/icons/reload.svg',
         rotate: true,
       });
-      btn.addEventListener('click', e => e.button === 0 && restoreClosedTab(this.doc));
+      btn.addEventListener('click', e => e.button === 0 && restoreClosedTab(this.doc), { signal });
       btn.addEventListener('contextmenu', e => {
         e.preventDefault();
         this.popupHandler.popup.openPopupAtScreen(e.screenX, e.screenY, true);
-      });
+      }, { signal });
       return btn;
     };
   }
@@ -108,4 +111,11 @@
     defaultArea: CustomizableUI.AREA_NAVBAR,
     onBuild: doc => new UndoCloseTabButton(doc).build(),
   });
+
+  return {
+    cleanup: () => {
+      abortController.abort();
+      CustomizableUI.destroyWidget('undo-close-tab-button');
+    }
+  };
 })();
