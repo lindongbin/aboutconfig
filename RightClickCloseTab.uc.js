@@ -1,6 +1,9 @@
 (function() {
     'use strict';
 
+    const abortController = new AbortController();
+    const { signal } = abortController;
+
     gBrowser.tabContainer.addEventListener('contextmenu', function(event) {
         if (event.ctrlKey) return;
         let tab = event.target?.closest('tab');
@@ -17,5 +20,7 @@
                 });
             }
         }
-    }, true);
+    }, { capture: true, signal });
+
+    return { cleanup: () => abortController.abort() };
 })();
