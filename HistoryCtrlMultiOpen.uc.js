@@ -1,6 +1,9 @@
 (function() {
     'use strict';
 
+    const abortController = new AbortController();
+    const { signal } = abortController;
+
     const originalWhereToOpenLink = BrowserUtils.whereToOpenLink;
     BrowserUtils.whereToOpenLink = function(event, ignoreButton, ignoreAlt) {
         if (event?.target?.closest('#historyMenuPopup, #PanelUI-history')) {
@@ -32,7 +35,7 @@
             }
         };
 
-        ['mousedown', 'click'].forEach(type => container.addEventListener(type, handler, true));
+        ['mousedown', 'click'].forEach(type => container.addEventListener(type, handler, { capture: true, signal }));
     }
 
     const popup = document.getElementById('historyMenuPopup');
@@ -55,5 +58,13 @@
         if (el) observer.observe(el, { childList: true, subtree: true });
     });
 
-    window.addEventListener('beforeunload', () => observer.disconnect());
+    window.addEventListener('beforeunload', () => observer.disconnect(), { signal });
+
+    return {
+        cleanup: () => {
+            abortController.abort();
+            BrowserUtils.whereToOpenLink = originalWhereToOpenLink;
+            observer.disconnect();
+        }
+    };
 })();
