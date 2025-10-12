@@ -2,6 +2,7 @@
 // Firefox 142+
 
 (function () {
+    let cleanup;
     async function initScript() {
         const cfg = {
             restrictToButtonClick: false,       // 是否仅允许通过点击搜索按钮触发滚轮切换（限制触发区域）
@@ -29,32 +30,31 @@
             throttleScrollSwitch: 100           // 滚轮切换节流间隔（毫秒）
         };
 
-        let searchbar = document.getElementById('searchbar');
-        let textbox = searchbar?.querySelector('.searchbar-textbox') || null;
-        let urlbar = document.getElementById('urlbar');
-        let ctxMenu = document.getElementById('context-searchselect');
-        let goBtn = document.querySelector('.search-go-button');
-        let searchIcon = searchbar?.querySelector('.searchbar-search-icon') || null;
+        const abortController = new AbortController();
+        const { signal } = abortController;
         const searchSvc = Services.search;
 
-        let cachedEngines = null;
-        let updateMenuTimer = null;
-        let switchEngineTimer = null;
+        const iconCache = new Map();
+        let searchbar = document.getElementById('searchbar');
+        let searchIcon = searchbar?.querySelector('.searchbar-search-icon');
+        let textbox = searchbar?.querySelector('.searchbar-textbox');
+        let goBtn = searchbar?.querySelector('.search-go-button');
+        let urlbar = document.getElementById('urlbar');
+        let ctxMenu = document.getElementById('context-searchselect');
 
-        const iconCache = new WeakMap();
+        let cachedEngines = null;
+        let defaultEngine = null;
+        let resizeTimer = null;
+        let switchEngineTimer = null;
+        let currentEngineIndex = -1;
+        let currentStyleElement = null;
         let lastEngineName = null;
         let lastMenuLabel = null;
+        let FormHistory = null;
 
-        function clearAllCache() {
-            cachedEngines = null;
-        }
-
-        async function getCachedEngines() {
-            if (!cachedEngines) {
-                cachedEngines = await searchSvc.getVisibleEngines();
-            }
-            return cachedEngines;
-        }
+        let original_recordSearch = null;
+        let originalHandleSearchCommandWhere = null;
+        let original_updatePlaceholder = null;
 
         function isUrlbarHasContent() {
             if (!gURLBar) return false;
@@ -62,13 +62,21 @@
             return value && value.trim() !== '' && gURLBar.getAttribute('pageproxystate') === 'valid';
         }
 
+        async function getFormHistory() {
+            if (!FormHistory) {
+                FormHistory = (await ChromeUtils.importESModule(
+                    "resource://gre/modules/FormHistory.sys.mjs"
+                )).FormHistory;
+            }
+            return FormHistory;
+        }
+
         async function resetEngine() {
             if (goBtn) goBtn.removeAttribute("hidden");
             if (!cfg.lockEngineMode) {
-                const engines = await getCachedEngines();
                 let targetEngine = cfg.forceFirstEngineOnReset || cfg.defaultEngineName === ''
-                    ? engines[0]
-                    : searchSvc.getEngineByName(cfg.defaultEngineName);
+                    ? cachedEngines[0]
+                    : cachedEngines.find(e => e.name === cfg.defaultEngineName);
                 if (targetEngine) {
                     await searchSvc.setDefault(targetEngine, Ci.nsISearchService.CHANGE_REASON_USER);
                 }
@@ -76,29 +84,20 @@
             if ((cfg.clearSearchboxOnReset || cfg.lockEngineMode) && textbox) textbox.value = '';
         }
 
-        function dblclickHandler(e) {
-            if (e.currentTarget.id === "urlbar" && isUrlbarHasContent()) return;
-            resetEngine();
-        }
-
         async function showEngine() {
-            const engine = searchSvc.defaultEngine;
-            if (!engine) return;
-
+            if (lastEngineName === defaultEngine.name && iconCache.has(defaultEngine.name)) return;
             if (cfg.showEngineNameInPlaceholder && textbox) {
-                textbox.setAttribute('placeholder', engine.name);
+                textbox.setAttribute('placeholder', defaultEngine.name);
             }
-
             if (cfg.showEngineIconInSearchbar && searchIcon) {
-                if (lastEngineName === engine.name && iconCache.has(engine)) return;
                 try {
-                    let iconURL = iconCache.get(engine);
+                    let iconURL = iconCache.get(defaultEngine.name);
                     if (!iconURL) {
-                        iconURL = await engine.getIconURL();
+                        iconURL = await defaultEngine.getIconURL();
                         if (!iconURL) {
                             iconURL = 'chrome://global/skin/icons/search-glass.svg';
                         }
-                        iconCache.set(engine, iconURL);
+                        iconCache.set(defaultEngine.name, iconURL);
                     }
                     if (iconURL) {
                         Object.assign(searchIcon.style, {
@@ -107,7 +106,7 @@
                             height: '16px',
                             background: ''
                         });
-                        lastEngineName = engine.name;
+                        lastEngineName = defaultEngine.name;
                     }
                 } catch (e) {
                     console.error("获取搜索引擎图标失败:", e);
@@ -129,38 +128,27 @@
             switchEngineTimer = setTimeout(() => { switchEngineTimer = null; }, cfg.throttleScrollSwitch);
 
             const dir = (cfg.scrollDirectionNormal ? 1 : -1) * Math.sign(event.deltaY);
-            const engines = await getCachedEngines();
-            if (!engines?.length) return;
 
-            const cur = searchSvc.defaultEngine;
-            if (!cur) return;
-
-            const idx = engines.findIndex(e => e.name === cur.name);
-            if (idx === -1) return;
-
-            let newIdx = idx + dir;
-
-            if (cfg.allowEngineLoopSwitch) {
-                newIdx = (newIdx + engines.length) % engines.length;
-            } else {
-                if (newIdx < 0 || newIdx >= engines.length) return;
+            if (currentEngineIndex === -1 || 
+                cachedEngines[currentEngineIndex]?.name !== defaultEngine.name) {
+                currentEngineIndex = cachedEngines.findIndex(e => e.name === defaultEngine.name);
             }
 
-            await searchSvc.setDefault(engines[newIdx], Ci.nsISearchService.CHANGE_REASON_USER);
+            let newIdx = currentEngineIndex + dir;
+
+            if (cfg.allowEngineLoopSwitch) {
+                newIdx = (newIdx + cachedEngines.length) % cachedEngines.length;
+            } else {
+                if (newIdx < 0 || newIdx >= cachedEngines.length) return;
+            }
+
+            currentEngineIndex = newIdx;
+
+            await searchSvc.setDefault(cachedEngines[newIdx], Ci.nsISearchService.CHANGE_REASON_USER);
 
             if (event.currentTarget.id === "urlbar" && gURLBar && gURLBar.value) {
                 gURLBar.search?.(gURLBar.value);
             }
-        }
-
-        let FormHistory = null;
-        async function getFormHistory() {
-            if (!FormHistory) {
-                FormHistory = (await ChromeUtils.importESModule(
-                    "resource://gre/modules/FormHistory.sys.mjs"
-                )).FormHistory;
-            }
-            return FormHistory;
         }
 
         async function updateHistory() {
@@ -185,32 +173,9 @@
             }
         }
 
-        if (cfg.resetEngineAfterSearch) {
-            if (gURLBar && gURLBar._recordSearch) {
-                const original_recordSearch = gURLBar._recordSearch;
-                gURLBar._recordSearch = function(...args) {
-                    const result = original_recordSearch.apply(this, args);
-                    onSearchSubmit();
-                    return result;
-                };
-            }
-
-            if (searchbar && searchbar.handleSearchCommandWhere) {
-                const originalHandleSearchCommandWhere = searchbar.handleSearchCommandWhere;
-                searchbar.handleSearchCommandWhere = function(aEvent, aEngine, aWhere, aParams) {
-                    const result = originalHandleSearchCommandWhere.call(this, aEvent, aEngine, aWhere, aParams);
-                    onSearchSubmit();
-                    return result;
-                };
-            }
-        }
-
-        if (cfg.enableUrlbarWheelSwitch && gURLBar && gURLBar._updatePlaceholder) {
-            gURLBar._updatePlaceholder = function(engineName) {
-                if (engineName && !this.searchMode) {
-                    this._setPlaceholder(engineName);
-                }
-            };
+        function dblclickHandler(e) {
+            if (e.currentTarget.id === "urlbar" && isUrlbarHasContent()) return;
+            resetEngine();
         }
 
         function contextClick() {
@@ -219,9 +184,28 @@
             onSearchSubmit();
         }
 
+        function handleAfterCustomization() {
+            searchbar = document.getElementById('searchbar');
+            searchIcon = searchbar?.querySelector('.searchbar-search-icon');
+            textbox = searchbar?.querySelector('.searchbar-textbox');
+            goBtn = searchbar?.querySelector('.search-go-button');
+            setTimeout(() => {
+                lastEngineName = null;
+                if (goBtn) goBtn.removeAttribute("hidden");
+                showEngine();
+            }, 100);
+        }
+
+        function handleWindowResize() {
+            if (resizeTimer) clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                handleAfterCustomization();
+            }, 200);
+        }
+
         async function updateContextMenu() {
-            if (!ctxMenu || !searchSvc.defaultEngine) return;
-            const engine = searchSvc.defaultEngine;
+            if (!cfg.enableContextMenuSwitch) return;
+            if (!ctxMenu) return;
             let text = ctxMenu.searchTerms || window.getSelection().toString();
             if (text.length > 15) {
                 let cutLen = 15;
@@ -231,22 +215,24 @@
             }
             const newLabel = gNavigatorBundle.getFormattedString(
                 'contextMenuSearch',
-                [engine.name, text]
+                [defaultEngine.name, text]
             );
             if (newLabel !== lastMenuLabel) {
                 ctxMenu.setAttribute('label', newLabel);
                 lastMenuLabel = newLabel;
             }
             if (!cfg.showContextMenuIcon) return;
-            let iconURL = iconCache.get(engine);
+            let iconURL = iconCache.get(defaultEngine.name);
             if (!iconURL) {
-                iconURL = await engine.getIconURL() || 'chrome://global/skin/icons/search-glass.svg';
-                iconCache.set(engine, iconURL);
+                iconURL = await defaultEngine.getIconURL() || 'chrome://global/skin/icons/search-glass.svg';
+                iconCache.set(defaultEngine.name, iconURL);
             }
-            document.querySelectorAll(`style[data-engine-style="${engine.name}"]`).forEach(node => node.remove());
-            const style = document.createElement('style');
-            style.dataset.engineStyle = engine.name;
-            style.textContent = `
+            if (!currentStyleElement) {
+                currentStyleElement = document.createElement('style');
+                currentStyleElement.dataset.engineStyle = 'search-engine-icon';
+                document.head.appendChild(currentStyleElement);
+            }
+            currentStyleElement.textContent = `
                 #context-searchselect::before {
                     margin-inline-end: 8px;
                     content: "";
@@ -257,81 +243,112 @@
                     background-size: contain !important;
                 }
             `;
-            document.head.appendChild(style);
         }
 
-        const eventListeners = [
-            { element: searchbar, config: cfg.enableSearchbarWheelSwitch, event: 'wheel', handler: switchEngine },
-            { element: searchbar, config: cfg.enableDoubleClickReset, event: 'dblclick', handler: dblclickHandler },
-            { element: urlbar, config: cfg.enableUrlbarWheelSwitch, event: 'wheel', handler: switchEngine },
-            { element: urlbar, config: cfg.enableDoubleClickReset, event: 'dblclick', handler: dblclickHandler },
-            { element: ctxMenu, config: cfg.enableContextMenuSwitch, event: 'wheel', handler: switchEngine },
-            { element: ctxMenu, config: cfg.enableContextMenuSwitch && cfg.syncSearchOnContextClick, event: 'click', handler: contextClick }
-        ];
-
-        function handleAfterCustomization() {
-            searchbar = document.getElementById('searchbar');
-            textbox = searchbar?.querySelector('.searchbar-textbox');
-            searchIcon = searchbar?.querySelector('.searchbar-search-icon');
-            goBtn = searchbar?.querySelector('.search-go-button');
-            setTimeout(() => {
-                lastEngineName = null;
-                if (goBtn) goBtn.removeAttribute("hidden");
-                showEngine();
-            }, 100);
-        }
-
-        let resizeTimer = null;
-        function handleWindowResize() {
-            if (resizeTimer) clearTimeout(resizeTimer);
-            resizeTimer = setTimeout(() => {
-                handleAfterCustomization();
-            }, 200);
-        }
-
-        function bindEvents() {
-            eventListeners.forEach(({ element, config, event, handler }) => {
-                if (element && config) element.addEventListener(event, handler, false);
-            });
-            window.addEventListener('aftercustomization', handleAfterCustomization, false);
-            window.addEventListener('resize', handleWindowResize, false);
-            window.addEventListener('unload', cleanup, false);
-        }
-
-        function cleanup() {
-            if (updateMenuTimer) clearTimeout(updateMenuTimer);
-            if (switchEngineTimer) clearTimeout(switchEngineTimer);
-            eventListeners.forEach(({ element, config, event, handler }) => {
-                if (element && config) element.removeEventListener(event, handler, false);
-            });
-            window.removeEventListener('aftercustomization', handleAfterCustomization, false);
-            window.removeEventListener('resize', handleWindowResize, false);
-            Services.obs.removeObserver(obsSearchChange, "browser-search-engine-modified");
-            Services.obs.removeObserver(obsInit, "browser-search-service");
-            document.querySelectorAll('style[data-engine-style]').forEach(node => node.remove());
-        }
-
-        function obsSearchChange(engine, topic, verb) {
+        async function obsSearchChange(engine, topic, verb) {
             if (topic !== "browser-search-engine-modified") return;
             if (["engine-added", "engine-removed", "engine-changed", "engine-loaded"].includes(verb)) {
-                clearAllCache(verb);
+                cachedEngines = await searchSvc.getVisibleEngines();
+                currentEngineIndex = -1;
             }
             if (verb === "engine-current" || verb === "engine-default") {
+                defaultEngine = searchSvc.defaultEngine;
                 const task = () => showEngine().then(updateContextMenu);
                 window.requestIdleCallback ? requestIdleCallback(task) : setTimeout(task, 0);
             }
         }
 
-        function obsInit(subject, topic, data) {
+        async function obsInit(subject, topic, data) {
             if (data !== "init-complete" || topic !== "browser-search-service") return;
-            const tasks = [];
-            if (cfg.resetEngineOnStartup) tasks.push(resetEngine());
-            tasks.push(showEngine());
-            Promise.all(tasks).then(updateContextMenu);
+            cachedEngines = await searchSvc.getVisibleEngines();
+            defaultEngine = searchSvc.defaultEngine;
+            await Promise.allSettled(cachedEngines.map(e => e.getIconURL().then(url => url && iconCache.set(e.name, url))));
+            if (cfg.resetEngineOnStartup) await resetEngine();
+            await showEngine();
+            await updateContextMenu();
+        }
+
+        cleanup = function() {
+            abortController.abort();
+            if (resizeTimer) clearTimeout(resizeTimer);
+            if (switchEngineTimer) clearTimeout(switchEngineTimer);
+            if (original_recordSearch && gURLBar) {
+                gURLBar._recordSearch = original_recordSearch;
+            }
+            if (originalHandleSearchCommandWhere && searchbar) {
+                searchbar.handleSearchCommandWhere = originalHandleSearchCommandWhere;
+            }
+            if (original_updatePlaceholder && gURLBar) {
+                gURLBar._updatePlaceholder = original_updatePlaceholder;
+            }
+            Services.obs.removeObserver(obsSearchChange, "browser-search-engine-modified");
+            Services.obs.removeObserver(obsInit, "browser-search-service");
+            if (searchIcon) searchIcon.removeAttribute('style');
+            if (textbox) textbox.removeAttribute('placeholder');
+            document.querySelectorAll('style[data-engine-style]').forEach(node => node.remove());
+
+            iconCache.clear();
+            cachedEngines = null;
+            defaultEngine = null;
+            currentEngineIndex = -1;
+            currentStyleElement = null;
+            lastEngineName = null;
+            lastMenuLabel = null;
+            FormHistory = null;
+        }
+
+        function bindEvents() {
+            const eventListeners = [
+                { element: searchbar, config: cfg.enableSearchbarWheelSwitch, event: 'wheel', handler: switchEngine },
+                { element: searchbar, config: cfg.enableDoubleClickReset, event: 'dblclick', handler: dblclickHandler },
+                { element: urlbar, config: cfg.enableUrlbarWheelSwitch, event: 'wheel', handler: switchEngine },
+                { element: urlbar, config: cfg.enableDoubleClickReset, event: 'dblclick', handler: dblclickHandler },
+                { element: ctxMenu, config: cfg.enableContextMenuSwitch, event: 'wheel', handler: switchEngine },
+                { element: ctxMenu, config: cfg.enableContextMenuSwitch && cfg.syncSearchOnContextClick, event: 'click', handler: contextClick }
+            ];
+
+            eventListeners.forEach(({ element, config, event, handler }) => {
+                if (element && config) {
+                    element.addEventListener(event, handler, event === 'wheel' ? { passive: true, signal } : { signal });
+                }
+            });
+            window.addEventListener('aftercustomization', handleAfterCustomization, { signal });
+            window.addEventListener('resize', handleWindowResize, { signal });
+            window.addEventListener('unload', cleanup, { signal });
+        }
+
+        if (cfg.resetEngineAfterSearch) {
+            if (gURLBar && gURLBar._recordSearch) {
+                original_recordSearch = gURLBar._recordSearch;
+                gURLBar._recordSearch = function(...args) {
+                    const result = original_recordSearch.apply(this, args);
+                    onSearchSubmit();
+                    return result;
+                };
+            }
+
+            if (searchbar && searchbar.handleSearchCommandWhere) {
+                originalHandleSearchCommandWhere = searchbar.handleSearchCommandWhere;
+                searchbar.handleSearchCommandWhere = function(aEvent, aEngine, aWhere, aParams) {
+                    const result = originalHandleSearchCommandWhere.call(this, aEvent, aEngine, aWhere, aParams);
+                    onSearchSubmit();
+                    return result;
+                };
+            }
+        }
+
+        if (cfg.enableUrlbarWheelSwitch && gURLBar && gURLBar._updatePlaceholder) {
+            original_updatePlaceholder = gURLBar._updatePlaceholder;
+            gURLBar._updatePlaceholder = function(engineName) {
+                if (engineName && !this.searchMode) {
+                    this._setPlaceholder(engineName);
+                }
+            };
         }
 
         Services.obs.addObserver(obsSearchChange, "browser-search-engine-modified");
         Services.obs.addObserver(obsInit, "browser-search-service");
+        if (searchSvc.isInitialized) obsInit(null, "browser-search-service", "init-complete");
         bindEvents();
     }
 
@@ -348,4 +365,5 @@
     }
 
     runAfterStartup(initScript);
+    return cleanup;
 })();
