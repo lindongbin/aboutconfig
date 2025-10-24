@@ -9,9 +9,9 @@ try {
       const scriptFile = Services.dirsvc.get("UChrm", Ci.nsIFile);
       scriptFile.append("UserChromeRules.uc.js");
       if (scriptFile.exists()) {
-        Services.scriptloader.loadSubScript(
+        Services.scriptloader.loadSubScriptWithOptions(
           Services.io.newFileURI(scriptFile).spec,
-          window
+          { target: window, ignoreCache: true }
         );
       }
     } catch (e) {
