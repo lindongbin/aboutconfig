@@ -12,6 +12,7 @@
   let rulesInMemory = [];
   let originalSnapshot = '';
   let isDirty = false;
+  let filterType = null;
 
   const baseCSS = `
     #ucm-main-dialog, #ucm-edit-dialog, #ucm-confirm-dialog {
@@ -53,7 +54,7 @@
     #ucm-edit-dialog textarea { min-height: 200px; }
     .ucm-add-btn { margin-top: 10px; align-self: flex-start; }
     .ucm-type-group { display: flex; gap: 10px; }
-    .ucm-type-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+    .ucm-type-group label { display: flex; align-items: center; user-select: none; cursor: pointer; }
   `;
 
   function createSnapshot(rules) {
@@ -502,6 +503,8 @@
     rulesInMemory.forEach(({ key, rule }, index) => {
       let item = itemElements.get(key) || createItemElement(key, rule);
       if (!itemElements.has(key)) itemElements.set(key, item);
+      item.container.style.display = filterType && rule.type !== filterType ? 'none' : '';
+      item.labelEl.setAttribute('draggable', filterType ? 'false' : 'true');
       if (item.checkbox.checked !== !!rule.enabled) item.checkbox.checked = !!rule.enabled;
       const newLabel = `[${rule.type.toUpperCase()}] ${rule.label}`;
       if (item.labelEl.textContent !== newLabel) item.labelEl.textContent = newLabel;
@@ -515,7 +518,6 @@
     if (form.lastChild !== mainDialog._btnRow) {
       form.appendChild(mainDialog._btnRow);
     }
-    setupDragAndDrop(form);
   }
 
   function createMainDialog() {
@@ -523,6 +525,7 @@
       const form = document.createElement('form');
       form.className = 'ucm-form';
       dialog.appendChild(form);
+      setupDragAndDrop(form);
       const addBtn = createButton('新增', () => showEditDialog(null));
       const exportBtn = createButton('导出', exportRules);
       const importBtn = createButton('导入', importRules);
@@ -532,7 +535,32 @@
         await showConfirmDialog('确定要重启 Firefox 吗？', restartBrowser);
       });
       const exitBtn = createButton('退出', () => dialog.close());
-      const btnRow = createButtonRow([addBtn, exportBtn, importBtn, backupBtn, openDirBtn, restartBtn, exitBtn]);
+      const filterGroup = document.createElement('div');
+      filterGroup.className = 'ucm-type-group';
+      filterGroup.style.marginLeft = 'auto';
+      const filterOptions = [
+        { id: 'filter-css', label: 'CSS', value: 'css' },
+        { id: 'filter-js', label: 'JS', value: 'js' }
+      ];
+      filterOptions.forEach(({ id, label, value }) => {
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = id;
+        checkbox.checked = filterType === value;
+        const lbl = document.createElement('label');
+        lbl.appendChild(checkbox);
+        lbl.appendChild(document.createTextNode(`${label}`));
+        lbl.htmlFor = id;
+        checkbox.addEventListener('change', () => {
+          filterGroup.querySelectorAll('input[type=checkbox]').forEach(cb => {
+            if (cb !== checkbox) cb.checked = false;
+          });
+          filterType = checkbox.checked ? value : null;
+          updateDialogDOM();
+        });
+        filterGroup.appendChild(lbl);
+      });
+      const btnRow = createButtonRow([addBtn, exportBtn, importBtn, backupBtn, openDirBtn, restartBtn, exitBtn, filterGroup]);
       form.appendChild(btnRow);
       dialog._btnRow = btnRow;
       dialog._form = form;
