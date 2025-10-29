@@ -7,6 +7,8 @@
   const styleMap = new Map();
   const keyToIndexMap = new Map();
   const styleSheetService = Cc["@mozilla.org/content/style-sheet-service;1"].getService(Ci.nsIStyleSheetService);
+  const chromeDir = Services.dirsvc.get("UChrm", Ci.nsIFile);
+  const chromeDirURI = Services.io.newFileURI(chromeDir);
 
   let mainDialog, editDialog;
   let rulesInMemory = [];
@@ -66,10 +68,7 @@
   }
 
   function getStorageFile() {
-    const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
-    const profileDir = Services.dirsvc.get("ProfD", Ci.nsIFile);
-    file.initWithPath(profileDir.path);
-    file.append("chrome");
+    const file = chromeDir.clone();
     file.append("UserChromeRules.json");
     return file;
   }
@@ -189,8 +188,7 @@
   }
 
   async function backupRules() {
-    const file = getStorageFile();
-    const backupFile = file.parent.clone();
+    const backupFile = chromeDir.clone();
     backupFile.append("UserChromeRules.bak");
     const performBackup = async () => {
       await IOUtils.writeUTF8(backupFile.path, JSON.stringify(getRulesObj(), null, 2));
@@ -237,6 +235,19 @@
     }
   }
 
+  function resolveUrl(url, quote, match) {
+    if (/^(data:|https?:|file:|chrome:|resource:)/.test(url)) {
+      return `url(${quote}${url}${quote})`;
+    }
+    try {
+      const absoluteURI = Services.io.newURI(url, null, chromeDirURI);
+      return `url(${quote}${absoluteURI.spec}${quote})`;
+    } catch (e) {
+      console.error(`无法解析 URL: ${url}`, e);
+      return match;
+    }
+  }
+
   async function applyUserChrome(targetRules = getRulesObj()) {
     for (const [key, rule] of Object.entries(targetRules)) {
       cleanupRule(key, rule?.type);
@@ -268,7 +279,14 @@
           console.error(rule.label, e);
         }
       } else if (rule.type === 'css') {
-        const uri = Services.io.newURI(`data:text/css;charset=utf-8,${encodeURIComponent(rule.code)}`);
+        let cssCode = rule.code;
+        cssCode = cssCode.replace(/@import\s+(?:url\()?(['"]?)([^'")]+)\1\)?/gi, (match, quote, url) => {
+          return `@import ${resolveUrl(url, quote, match)}`;
+        });
+        cssCode = cssCode.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, url) => {
+          return resolveUrl(url, quote, match);
+        });
+        const uri = Services.io.newURI(`data:text/css;charset=utf-8,${encodeURIComponent(cssCode)}`);
         styleSheetService.loadAndRegisterSheet(uri, styleSheetService.USER_SHEET);
         styleMap.set(key, uri);
       }
@@ -530,7 +548,7 @@
       const exportBtn = createButton('导出', exportRules);
       const importBtn = createButton('导入', importRules);
       const backupBtn = createButton('备份', backupRules);
-      const openDirBtn = createButton('目录', () => getStorageFile().parent.launch());
+      const openDirBtn = createButton('目录', () => chromeDir.launch());
       const restartBtn = createButton('重启', async () => {
         await showConfirmDialog('确定要重启 Firefox 吗？', restartBrowser);
       });
