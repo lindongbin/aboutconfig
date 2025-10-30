@@ -4,7 +4,9 @@
   const CONFIG = {
     enableMultiColumn: true,    // 是否启用多列
     itemsPerColumn: 20,         // 每列项目数量
-    columnWidth: 250            // 每列宽度(px)
+    columnWidth: 250,           // 每列宽度(px)
+    maxTabsUndo: 60,            // 最大项目总数
+    bindHistoryButton: false    // 绑定历史按钮
   };
 
   const abortController = new AbortController();
@@ -114,19 +116,26 @@
     constructor(doc) {
       this.doc = doc;
       this.popupHandler = new UndoCloseTabPopup(doc);
+      Services.prefs.setIntPref('browser.sessionstore.max_tabs_undo', CONFIG.maxTabsUndo);
     }
 
     build = () => {
-      const btn = createToolbarButton(this.doc, {
-        id: 'undo-close-tab-button',
-        label: '恢复标签页',
-        tooltip: '恢复最近关闭的标签页',
-        image: 'chrome://global/skin/icons/reload.svg',
-        rotate: true,
-      });
-      btn.addEventListener('click', e => {
-        if (e.button === 0) SessionStore.undoCloseTab(this.doc.defaultView, 0);
-      }, { signal });
+      let btn;
+      if (CONFIG.bindHistoryButton) {
+        btn = this.doc.getElementById('history-panelmenu');
+        if (!btn) return null;
+      } else {
+        btn = createToolbarButton(this.doc, {
+          id: 'undo-close-tab-button',
+          label: '恢复标签页',
+          tooltip: '恢复最近关闭的标签页',
+          image: 'chrome://global/skin/icons/reload.svg',
+          rotate: true,
+        });
+        btn.addEventListener('click', e => {
+          if (e.button === 0) SessionStore.undoCloseTab(this.doc.defaultView, 0);
+        }, { signal });
+      }
       btn.addEventListener('contextmenu', e => {
         e.preventDefault();
         this.popupHandler.popup.openPopupAtScreen(e.screenX, e.screenY, true);
@@ -135,17 +144,29 @@
     };
   }
 
-  CustomizableUI.createWidget({
-    id: 'undo-close-tab-button',
-    type: 'custom',
-    defaultArea: CustomizableUI.AREA_NAVBAR,
-    onBuild: doc => new UndoCloseTabButton(doc).build(),
-  });
+  const buildBtn = (doc) => new UndoCloseTabButton(doc).build();
+
+  if (CONFIG.bindHistoryButton) {
+    if (document.readyState === 'complete') {
+      buildBtn(document);
+    } else {
+      window.addEventListener('load', () => buildBtn(document), { once: true });
+    }
+  } else {
+    CustomizableUI.createWidget({
+      id: 'undo-close-tab-button',
+      type: 'custom',
+      defaultArea: CustomizableUI.AREA_NAVBAR,
+      onBuild: buildBtn,
+    });
+  }
 
   return {
     cleanup: () => {
       abortController.abort();
-      CustomizableUI.destroyWidget('undo-close-tab-button');
+      if (!CONFIG.bindHistoryButton) {
+        CustomizableUI.destroyWidget('undo-close-tab-button');
+      }
     }
   };
 })();
