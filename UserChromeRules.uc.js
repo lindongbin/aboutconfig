@@ -7,53 +7,40 @@
   const styleMap = new Map();
   const keyToIndexMap = new Map();
   const styleSheetService = Cc["@mozilla.org/content/style-sheet-service;1"].getService(Ci.nsIStyleSheetService);
+  const chromeDir = Services.dirsvc.get("UChrm", Ci.nsIFile);
+  const chromeDirURI = Services.io.newFileURI(chromeDir);
 
   let mainDialog, editDialog;
   let rulesInMemory = [];
   let originalSnapshot = '';
   let isDirty = false;
+  let filterType = null;
 
   const baseCSS = `
     #ucm-main-dialog, #ucm-edit-dialog, #ucm-confirm-dialog {
       padding: 15px; border: 1px solid var(--arrowpanel-border-color);
       border-radius: 4px; background: var(--arrowpanel-background);
-      color: var(--arrowpanel-color);
-      min-width: 400px; max-width: 600px; z-index: 10000;
-      font: message-box; font-size: 14px; line-height: 14px;
+      color: var(--arrowpanel-color); font-size: 14px; line-height: 14px;
       box-shadow: 0 1px 4px color-mix(in srgb, currentColor 20%, transparent);
     }
     #ucm-main-dialog::backdrop, #ucm-edit-dialog::backdrop, #ucm-confirm-dialog::backdrop {
       background: color-mix(in srgb, currentColor 10%, transparent);
     }
     .ucm-form { display: flex; flex-direction: column; gap: 12px; }
-    .ucm-item { 
-      display: flex; align-items: center; gap: 8px;
-      user-select: none;
+    .ucm-type-group { display: flex; gap: 10px; }
+    .ucm-type-group label { display: flex; align-items: center; user-select: none; cursor: pointer; }
+    .ucm-item {
+      display: flex; align-items: center; gap: 8px; user-select: none;
       transition: transform 0.3s ease-out, opacity 0.3s ease-out;
     }
-    .ucm-item:not(.ucm-dragging) {
-      transition: transform 0.3s ease-out;
-    }
-    .ucm-item.ucm-dragging {
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.3s ease-out;
-    }
-    .ucm-item.ucm-fade-in {
-      animation: fadeIn 0.5s ease-out;
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-    .ucm-label { flex: 1; cursor: pointer; }
+    .ucm-item.ucm-dragging { opacity: 0; pointer-events: none; }
+    .ucm-item.ucm-fade-in { animation: fadeIn 0.5s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .ucm-label { flex: 1; }
     .ucm-drag-handle { cursor: grab; }
     .ucm-edit-btn, .ucm-delete-btn { margin-left: 4px; }
-    #ucm-edit-dialog input[type=text], #ucm-edit-dialog textarea { width: 100%; box-sizing: border-box; font-family: monospace; }
-    #ucm-edit-dialog textarea { min-height: 200px; }
-    .ucm-add-btn { margin-top: 10px; align-self: flex-start; }
-    .ucm-type-group { display: flex; gap: 10px; }
-    .ucm-type-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+    #ucm-edit-dialog input[type=text], #ucm-edit-dialog textarea { box-sizing: border-box; font-family: monospace; }
+    #ucm-edit-dialog textarea { min-height: 200px; max-height: 80vh; min-width: 400px; max-width: 100%; }
   `;
 
   function createSnapshot(rules) {
@@ -65,10 +52,7 @@
   }
 
   function getStorageFile() {
-    const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
-    const profileDir = Services.dirsvc.get("ProfD", Ci.nsIFile);
-    file.initWithPath(profileDir.path);
-    file.append("chrome");
+    const file = chromeDir.clone();
     file.append("UserChromeRules.json");
     return file;
   }
@@ -188,8 +172,7 @@
   }
 
   async function backupRules() {
-    const file = getStorageFile();
-    const backupFile = file.parent.clone();
+    const backupFile = chromeDir.clone();
     backupFile.append("UserChromeRules.bak");
     const performBackup = async () => {
       await IOUtils.writeUTF8(backupFile.path, JSON.stringify(getRulesObj(), null, 2));
@@ -236,6 +219,19 @@
     }
   }
 
+  function resolveUrl(url, quote, match) {
+    if (/^(data:|https?:|file:|chrome:|resource:)/.test(url)) {
+      return `url(${quote}${url}${quote})`;
+    }
+    try {
+      const absoluteURI = Services.io.newURI(url, null, chromeDirURI);
+      return `url(${quote}${absoluteURI.spec}${quote})`;
+    } catch (e) {
+      console.error(`无法解析 URL: ${url}`, e);
+      return match;
+    }
+  }
+
   async function applyUserChrome(targetRules = getRulesObj()) {
     for (const [key, rule] of Object.entries(targetRules)) {
       cleanupRule(key, rule?.type);
@@ -267,7 +263,14 @@
           console.error(rule.label, e);
         }
       } else if (rule.type === 'css') {
-        const uri = Services.io.newURI(`data:text/css;charset=utf-8,${encodeURIComponent(rule.code)}`);
+        let cssCode = rule.code;
+        cssCode = cssCode.replace(/@import\s+(?:url\()?(['"]?)([^'")]+)\1\)?/gi, (match, quote, url) => {
+          return `@import ${resolveUrl(url, quote, match)}`;
+        });
+        cssCode = cssCode.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, url) => {
+          return resolveUrl(url, quote, match);
+        });
+        const uri = Services.io.newURI(`data:text/css;charset=utf-8,${encodeURIComponent(cssCode)}`);
         styleSheetService.loadAndRegisterSheet(uri, styleSheetService.USER_SHEET);
         styleMap.set(key, uri);
       }
@@ -316,20 +319,10 @@
     labelEl.className = 'ucm-label ucm-drag-handle';
     labelEl.textContent = `[${rule.type.toUpperCase()}] ${rule.label}`;
     labelEl.setAttribute('draggable', 'true');
-    const editBtn = createButton('修改', () => showEditDialog(key));
+    const editBtn = createButton('修改', null);
     editBtn.className = 'ucm-edit-btn';
-    const deleteBtn = createButton('删除', () => showDeleteConfirm(key));
+    const deleteBtn = createButton('删除', null);
     deleteBtn.className = 'ucm-delete-btn';
-    checkbox.addEventListener('change', async () => {
-      const index = findIndexByKey(key);
-      const rule = rulesInMemory[index].rule;
-      const wasEnabled = rule.enabled;
-      rule.enabled = checkbox.checked;
-      if (wasEnabled && !checkbox.checked && rule.type === 'js' && !scriptMap.has(key)) {
-        await showConfirmDialog("此规则需要重启浏览器才能完全禁用。", null, true);
-      }
-      await applyUserChrome({ [key]: rule });
-    });
     div.append(checkbox, labelEl, editBtn, deleteBtn);
     return { container: div, checkbox, labelEl };
   }
@@ -502,6 +495,8 @@
     rulesInMemory.forEach(({ key, rule }, index) => {
       let item = itemElements.get(key) || createItemElement(key, rule);
       if (!itemElements.has(key)) itemElements.set(key, item);
+      item.container.style.display = filterType && rule.type !== filterType ? 'none' : '';
+      item.labelEl.setAttribute('draggable', filterType ? 'false' : 'true');
       if (item.checkbox.checked !== !!rule.enabled) item.checkbox.checked = !!rule.enabled;
       const newLabel = `[${rule.type.toUpperCase()}] ${rule.label}`;
       if (item.labelEl.textContent !== newLabel) item.labelEl.textContent = newLabel;
@@ -515,7 +510,6 @@
     if (form.lastChild !== mainDialog._btnRow) {
       form.appendChild(mainDialog._btnRow);
     }
-    setupDragAndDrop(form);
   }
 
   function createMainDialog() {
@@ -523,16 +517,68 @@
       const form = document.createElement('form');
       form.className = 'ucm-form';
       dialog.appendChild(form);
+      setupDragAndDrop(form);
+      form.addEventListener('click', (e) => {
+        const target = e.target.closest('button');
+        if (!target) return;
+        const itemRow = target.closest('.ucm-item');
+        if (!itemRow) return;
+        const key = itemRow.dataset.key;
+        if (target.classList.contains('ucm-edit-btn')) {
+          showEditDialog(key);
+        } else if (target.classList.contains('ucm-delete-btn')) {
+          showDeleteConfirm(key);
+        }
+      });
+      form.addEventListener('change', async (e) => {
+        const target = e.target;
+        if (target.type !== 'checkbox' || !target.closest('.ucm-item')) return;
+        const itemRow = target.closest('.ucm-item');
+        const key = itemRow.dataset.key;
+        const index = findIndexByKey(key);
+        const rule = rulesInMemory[index].rule;
+        const wasEnabled = rule.enabled;
+        rule.enabled = target.checked;
+        if (wasEnabled && !target.checked && rule.type === 'js' && !scriptMap.has(key)) {
+          await showConfirmDialog("此规则需要重启浏览器才能完全禁用。", null, true);
+        }
+        await applyUserChrome({ [key]: rule });
+      });
       const addBtn = createButton('新增', () => showEditDialog(null));
       const exportBtn = createButton('导出', exportRules);
       const importBtn = createButton('导入', importRules);
       const backupBtn = createButton('备份', backupRules);
-      const openDirBtn = createButton('目录', () => getStorageFile().parent.launch());
+      const openDirBtn = createButton('目录', () => chromeDir.launch());
       const restartBtn = createButton('重启', async () => {
         await showConfirmDialog('确定要重启 Firefox 吗？', restartBrowser);
       });
       const exitBtn = createButton('退出', () => dialog.close());
-      const btnRow = createButtonRow([addBtn, exportBtn, importBtn, backupBtn, openDirBtn, restartBtn, exitBtn]);
+      const filterGroup = document.createElement('div');
+      filterGroup.className = 'ucm-type-group';
+      filterGroup.style.marginLeft = 'auto';
+      const filterOptions = [
+        { id: 'filter-css', label: 'CSS', value: 'css' },
+        { id: 'filter-js', label: 'JS', value: 'js' }
+      ];
+      filterOptions.forEach(({ id, label, value }) => {
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = id;
+        checkbox.checked = filterType === value;
+        const lbl = document.createElement('label');
+        lbl.appendChild(checkbox);
+        lbl.appendChild(document.createTextNode(`${label}`));
+        lbl.htmlFor = id;
+        checkbox.addEventListener('change', () => {
+          filterGroup.querySelectorAll('input[type=checkbox]').forEach(cb => {
+            if (cb !== checkbox) cb.checked = false;
+          });
+          filterType = checkbox.checked ? value : null;
+          updateDialogDOM();
+        });
+        filterGroup.appendChild(lbl);
+      });
+      const btnRow = createButtonRow([addBtn, exportBtn, importBtn, backupBtn, openDirBtn, restartBtn, exitBtn, filterGroup]);
       form.appendChild(btnRow);
       dialog._btnRow = btnRow;
       dialog._form = form;
