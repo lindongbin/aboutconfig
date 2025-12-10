@@ -1,5 +1,9 @@
-(function () {
-  'use strict';
+// UserChromeRules.uc.js
+
+function runUserChromeRules(win = window) {
+
+  const window = win;
+  const document = win.document;
 
   const itemElements = new Map();
   const sandboxMap = new Map();
@@ -9,6 +13,7 @@
   const styleSheetService = Cc["@mozilla.org/content/style-sheet-service;1"].getService(Ci.nsIStyleSheetService);
   const chromeDir = Services.dirsvc.get("UChrm", Ci.nsIFile);
   const chromeDirURI = Services.io.newFileURI(chromeDir);
+  const pattern = /@?import\s+.*?(?:"|'|\(["']?)(.+?\.(?:css|js|mjs))["')]/gmi;
 
   let mainDialog, editDialog;
   let rulesInMemory = [];
@@ -76,9 +81,7 @@
         const data = await IOUtils.readUTF8(file.path);
         return Object.entries(JSON.parse(data)).map(([key, rule]) => ({key, rule}));
       }
-    } catch (e) {
-      console.error("读取规则文件失败:", e);
-    }
+    } catch (e) { Cu.reportError(e); }
     return [];
   }
 
@@ -86,26 +89,35 @@
     try {
       const file = getStorageFile();
       await IOUtils.writeUTF8(file.path, JSON.stringify(getRulesObj(), null, 2));
-    } catch (e) {
-      console.error("保存规则文件失败:", e);
-    }
+    } catch (e) { Cu.reportError(e); }
   }
 
   async function exportRules() {
     const dir = await pickFileOrFolder("选择导出文件夹", 'folder');
     if (!dir) return;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    await IOUtils.writeUTF8(PathUtils.join(dir, `UserChromeRules_${timestamp}.json`), JSON.stringify(getRulesObj(), null, 2));
-    await Promise.all(rulesInMemory.map(({key, rule}) => {
-      const safeName = rule.label.replace(/[<>:"/\\|?*]/g, '_');
-      const ext = rule.type;
-      const codePath = PathUtils.join(dir, `${safeName}_${timestamp}.${ext}`);
-      return IOUtils.writeUTF8(codePath, rule.code);
-    }));
+    const exportDir = PathUtils.join(dir, `UserChromeRules_${Date.now()}`);
+    await IOUtils.makeDirectory(exportDir);
+    let exported = 0;
+    for (const { key, rule } of rulesInMemory) {
+      const safeName = `${rule.label.replace(/[<>:"/\\|?*]/g, '_').trim()}_${key}`;
+      const ruleDir = PathUtils.join(exportDir, safeName);
+      const mainFile = PathUtils.join(ruleDir, `${safeName}.${rule.type}`);
+      const depDir = PathUtils.join(chromeDir.path, key);
+      const hasDeps = await IOUtils.exists(depDir);
+      if (hasDeps) {
+        await IOUtils.copy(depDir, ruleDir, { recursive: true });
+        await IOUtils.writeUTF8(mainFile, rule.code);
+      } else {
+        await IOUtils.makeDirectory(ruleDir);
+        await IOUtils.writeUTF8(mainFile, rule.code);
+      }
+      exported++;
+    }
+    await showConfirmDialog(`成功导出 ${exported} 条规则。`, null, true);
   }
 
   async function importRules() {
-    const files = await pickFileOrFolder("选择文件", 'files', ['.json', '.js', '.css']);
+    const files = await pickFileOrFolder("选择文件", 'files', ['.json', '.js', '.mjs', '.css']);
     if (!files?.length) return;
     let importedCount = 0;
     for (const file of files) {
@@ -119,9 +131,27 @@
             typeof value.label === 'string' && typeof value.code === 'string' && typeof value.enabled === 'boolean'
           ).map(([k, value]) => ({key: k, rule: value}));
         } else {
-          const ext = file.leafName.endsWith('.js') ? 'js' : 'css';
-          const label = file.leafName.replace(/\.(js|css)$/, '');
+          const ext = file.leafName.endsWith('.css') ? 'css' : 'js';
+          const label = file.leafName.replace(/\.(js|mjs|css)$/, '');
           const key = `ucm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+          const matches = [...content.matchAll(pattern)];
+          if (matches.length > 0) {
+            const keyDir = PathUtils.join(chromeDir.path, key);
+            await IOUtils.makeDirectory(keyDir);
+            const base = PathUtils.parent(file.path);
+            const copied = new Set();
+            for (const matche of matches) {
+              let depPath = matche[1];
+              depPath = depPath.startsWith('./') ? depPath.substring(2) : depPath;
+              const isFolder = depPath.includes('/');
+              const depName = isFolder ? depPath.split('/')[0] : depPath;
+              if (copied.has(depName)) continue;
+              const sourcePath = PathUtils.join(base, depName);
+              const destPath = PathUtils.join(keyDir, depName);
+              await IOUtils.copy(sourcePath, destPath, { recursive: isFolder }).catch(() => {});
+              copied.add(depName);
+            }
+          }
           newRules = [{key, rule: {type: ext, label, enabled: true, code: content}}];
         }
         for (const {key, rule} of newRules) {
@@ -131,9 +161,7 @@
             importedCount++;
           }
         }
-      } catch (e) {
-        console.error(`导入文件 ${file.leafName} 失败:`, e);
-      }
+      } catch (e) { Cu.reportError(e); }
     }
     if (importedCount > 0) {
       syncKeyIndexMap();
@@ -207,7 +235,7 @@
   function cleanupRule(key, type) {
     if (type === 'js') {
       if (scriptMap.has(key)) {
-        try { scriptMap.get(key)?.cleanup?.(); } catch(e) { console.error(e); }
+        try { scriptMap.get(key)?.cleanup?.(); } catch (e) { Cu.reportError(e); }
         scriptMap.delete(key);
       }
       if (sandboxMap.has(key)) {
@@ -219,58 +247,45 @@
     }
   }
 
-  function resolveUrl(url, quote, match) {
-    if (/^(data:|https?:|file:|chrome:|resource:)/.test(url)) {
-      return `url(${quote}${url}${quote})`;
-    }
-    try {
-      const absoluteURI = Services.io.newURI(url, null, chromeDirURI);
-      return `url(${quote}${absoluteURI.spec}${quote})`;
-    } catch (e) {
-      console.error(`无法解析 URL: ${url}`, e);
-      return match;
-    }
-  }
-
   async function applyUserChrome(targetRules = getRulesObj()) {
     for (const [key, rule] of Object.entries(targetRules)) {
       cleanupRule(key, rule?.type);
       if (!rule?.enabled) continue;
+      let uri, code = rule.code, hasDeps = false;
+      code = code.replace(pattern, (match, path) => {
+        hasDeps = true;
+        const cleanPath = path.startsWith('./') ? path.substring(2) : path;
+        return match.replace(path, `resource://ucrules/${key}/${cleanPath}`);
+      });
       if (rule.type === 'js') {
-        try {
-          const sandbox = Cu.Sandbox(window, {
-            sandboxPrototype: window,
-            wantXrays: false,
-            sandboxName: `UserChrome Rule: ${rule.label}`
-          });
+        const sandbox = Cu.Sandbox(window, {
+          sandboxPrototype: window,
+          wantXrays: false,
+          sandboxName: `UserChrome Rule: ${rule.label}`
+        });
+        if (hasDeps) {
+          const tempFile = chromeDir.clone();
+          tempFile.append(`_${key}.mjs`);
+          await IOUtils.writeUTF8(tempFile.path, code);
+          uri = Services.io.newURI(`resource://ucrules/_${key}.mjs`);
+          Cu.evalInSandbox(`ChromeUtils.importESModule("${uri.spec}", {global: "current"});`, sandbox);
+          await IOUtils.remove(tempFile.path);
+        } else {
           sandboxMap.set(key, sandbox);
-          const result = Cu.evalInSandbox(rule.code, sandbox);
-          let cleanupFn = null;
-          if (typeof result === 'function') {
-            cleanupFn = result;
-          } else if (result && typeof result === 'object') {
-            for (const prop in result) {
-              if (typeof result[prop] === 'function') {
-                cleanupFn = result[prop];
-                break;
-              }
-            }
-          }
+          const result = Cu.evalInSandbox(code, sandbox);
+          const cleanupFn = typeof result === "function" ? result
+            : Object.values(result ?? {}).find(v => typeof v === "function") ?? null;
           if (cleanupFn) {
             scriptMap.set(key, { cleanup: cleanupFn });
           }
-        } catch (e) {
-          console.error(rule.label, e);
         }
       } else if (rule.type === 'css') {
-        let cssCode = rule.code;
-        cssCode = cssCode.replace(/@import\s+(?:url\()?(['"]?)([^'")]+)\1\)?/gi, (match, quote, url) => {
-          return `@import ${resolveUrl(url, quote, match)}`;
+        code = code.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, url) => {
+          if (/^(data:|https?:|file:|chrome:|resource:)/.test(url)) return `url(${quote}${url}${quote})`;
+          const cleanUrl = url.startsWith('./') ? url.substring(2) : url;
+          return `url(${quote}resource://ucrules/${cleanUrl}${quote})`;
         });
-        cssCode = cssCode.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, url) => {
-          return resolveUrl(url, quote, match);
-        });
-        const uri = Services.io.newURI(`data:text/css;charset=utf-8,${encodeURIComponent(cssCode)}`);
+        uri = Services.io.newURI(`data:text/css;charset=utf-8,${encodeURIComponent(code)}`);
         styleSheetService.loadAndRegisterSheet(uri, styleSheetService.USER_SHEET);
         styleMap.set(key, uri);
       }
@@ -330,6 +345,8 @@
   function setupDragAndDrop(form) {
     if (form.hasAttribute('data-drag-setup')) return;
     form.setAttribute('data-drag-setup', 'true');
+    const raf = window.requestAnimationFrame;
+    const timeout = window.setTimeout;
     let draggedKey = null;
     let draggedIndex = -1;
     let shiftAmount = 0;
@@ -405,7 +422,7 @@
           itemsToShift.add(i);
         }
       }
-      rafId = requestAnimationFrame(() => {
+      rafId = raf(() => {
         rafId = null;
         if (!isDragging) return;
         cachedItems.forEach(item => {
@@ -432,7 +449,7 @@
         item.style.transition = '';
       });
       isDragging = false;
-      requestAnimationFrame(async () => {
+      raf(async () => {
         let rulesInsertIndex;
         let insertIndex = lastInsertIndex;
         if (insertIndex < cachedItems.length) {
@@ -459,7 +476,7 @@
           form.insertBefore(draggedElement, targetElement);
           if (draggedElement) {
             draggedElement.classList.add('ucm-fade-in');
-            setTimeout(() => {
+            timeout(() => {
               draggedElement.classList.remove('ucm-fade-in');
             }, 500);
           }
@@ -696,6 +713,7 @@
       async () => {
         const rule = rulesInMemory[index].rule;
         cleanupRule(key, rule.type);
+        await IOUtils.remove(PathUtils.join(chromeDir.path, key), { recursive: true }).catch(() => {});
         rulesInMemory.splice(index, 1);
         syncKeyIndexMap();
         isDirty = true;
@@ -725,6 +743,7 @@
   }
 
   async function init() {
+    Services.io.getProtocolHandler("resource").QueryInterface(Ci.nsIResProtocolHandler).setSubstitution("ucrules", chromeDirURI);
     rulesInMemory = await getRulesFromFile();
     syncKeyIndexMap();
     originalSnapshot = createSnapshot(rulesInMemory);
@@ -748,4 +767,16 @@
     mainDialog?.remove();
     document.getElementById('appMenu-ucm-button')?.remove();
   }, { once: true });
-})();
+}
+
+try {
+  if (typeof window === 'undefined') {
+    Services.obs.addObserver(function observer(subject) {
+      Services.obs.removeObserver(observer, "browser-delayed-startup-finished");
+      Cu.importGlobalProperties(['IOUtils', 'PathUtils']);
+      runUserChromeRules(subject);
+    }, "browser-delayed-startup-finished");
+  } else {
+    runUserChromeRules();
+  }
+} catch (e) { Cu.reportError(e); }
