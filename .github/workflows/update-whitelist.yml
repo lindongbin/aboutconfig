@@ -16,10 +16,18 @@ jobs:
     - name: Generate whitelist
       run: |
         curl -o whitelist.txt https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
-        sed -i -e '/^#/d' \
-               -e 's/server=\//@@||/g' \
-               -e 's/\/.*//g' \
-               -e '1i\[AutoProxy]' whitelist.txt
+        cat > run.py << EOF
+        C={}
+        def v(n):
+          if n in C:return C[n]
+          b,x=[],n
+          while x:b.append(x&127|128);x>>=7
+          b[-1]&=127;C[n]=bytes(b);return C[n]if b else b''
+        T,D,P,S=v(10),v(8),v(2),v(18)
+        d=[(l[8:l.index('/',8)]if'/'in l[8:]else l[8:-1]).encode()for l in open("whitelist.txt",encoding="utf8")if l.startswith("server=/")]
+        open("geosite.dat","wb").write(T+v(len(b:=bytearray(T+v(2)+b"cn"+b"".join(S+v(len(p:=(D+P+S+v(len(x))+x)))+p for x in d))))+b)
+        EOF
+        python run.py
         
     - name: Commit files
       run: |
@@ -27,6 +35,6 @@ jobs:
         git config user.email lin.crk@gmail.com
         git checkout --orphan whitelist
         git rm -rf .
-        git add "whitelist.txt"
-        git commit -m "Update whitelist.txt"
+        git add "geosite.dat"
+        git commit -m "Update geosite.dat"
         git push --force origin whitelist:whitelist
