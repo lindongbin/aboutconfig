@@ -16,6 +16,7 @@ function runUserChromeRules(win = window) {
   const styleSheetService = Cc["@mozilla.org/content/style-sheet-service;1"].getService(Ci.nsIStyleSheetService);
   const chromeDir = Services.dirsvc.get("UChrm", Ci.nsIFile);
   const chromeDirURI = Services.io.newFileURI(chromeDir);
+  const rulesDeps = PathUtils.join(chromeDir.path, "UserChromeRules");
   const pattern = /@?import\s+.*?(?:"|'|\(["']?)(.+?\.(?:css|js|mjs))["')]/gmi;
 
   let mainDialog, editDialog;
@@ -202,7 +203,7 @@ function runUserChromeRules(win = window) {
           const key = `ucm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
           const matches = [...content.matchAll(pattern)];
           if (matches.length > 0) {
-            const keyDir = PathUtils.join(chromeDir.path, key);
+            const keyDir = PathUtils.join(rulesDeps, key);
             await IOUtils.makeDirectory(keyDir);
             const base = PathUtils.parent(file.path);
             const copied = new Set();
@@ -266,14 +267,38 @@ function runUserChromeRules(win = window) {
   }
 
   async function backupRules() {
+    await saveIfNeeded();
     const backupFile = chromeDir.clone();
-    backupFile.append("UserChromeRules.bak");
+    backupFile.append("UserChromeRules.zip");
     const performBackup = async () => {
-      await IOUtils.writeUTF8(backupFile.path, JSON.stringify(getRulesObj(), null, 2));
-      await showConfirmDialog(_('msg_backup_ok'), null, true);
+      try {
+        const zipW = Components.Constructor("@mozilla.org/zipwriter;1", "nsIZipWriter")();
+        zipW.open(backupFile, 0x04 | 0x08 | 0x20);
+        const jsonFile = getStorageFile();
+        if (await IOUtils.exists(jsonFile.path)) {
+          zipW.addEntryFile("UserChromeRules.json", Ci.nsIZipWriter.COMPRESSION_NONE, await IOUtils.getFile(jsonFile.path), false);
+        }
+        if (await IOUtils.exists(rulesDeps)) {
+          const rootNSI = await IOUtils.getDirectory(rulesDeps);
+          const addFolder = async (dirPath) => {
+            for (const path of await IOUtils.getChildren(dirPath)) {
+              const info = await IOUtils.stat(path);
+              if (info.type === "directory") {
+                await addFolder(path);
+              } else {
+                const fileNSI = await IOUtils.getFile(path);
+                let relPath = fileNSI.getRelativePath(rootNSI).replace(/\\/g, "/");
+                zipW.addEntryFile("UserChromeRules/" + relPath, Ci.nsIZipWriter.COMPRESSION_NONE, fileNSI, false);
+              }
+            }
+          };
+          await addFolder(rulesDeps);
+        }
+        zipW.close();
+        await showConfirmDialog(_('msg_backup_ok'), null, true);
+      } catch (e) { Cu.reportError(e); }
     };
-    const backupExists = await IOUtils.exists(backupFile.path);
-    if (backupExists) {
+    if (await IOUtils.exists(backupFile.path)) {
       await showConfirmDialog(_('confirm_overwrite'), performBackup);
     } else {
       await performBackup();
@@ -321,7 +346,7 @@ function runUserChromeRules(win = window) {
       code = code.replace(pattern, (match, path) => {
         hasDeps = true;
         const cleanPath = path.startsWith('./') ? path.substring(2) : path;
-        return match.replace(path, `resource://ucrules/${key}/${cleanPath}`);
+        return match.replace(path, `resource://ucrules/UserChromeRules/${key}/${cleanPath}`);
       });
       if (rule.type === 'js') {
         const sandbox = Cu.Sandbox(window, {
@@ -726,7 +751,8 @@ function runUserChromeRules(win = window) {
       async () => {
         const rule = rulesInMemory[index].rule;
         cleanupRule(key, rule.type);
-        await IOUtils.remove(PathUtils.join(chromeDir.path, key), { recursive: true }).catch(() => {});
+        await IOUtils.remove(PathUtils.join(rulesDeps, key), { recursive: true }).catch(() => {});
+        await IOUtils.remove(rulesDeps).catch(() => {});
         rulesInMemory.splice(index, 1);
         syncKeyIndexMap();
         isDirty = true;
