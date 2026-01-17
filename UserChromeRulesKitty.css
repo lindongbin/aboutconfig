@@ -1,0 +1,130 @@
+/* Only for UserChromeRules.uc.js */
+
+#ucm-main-dialog .ucm-grid {
+  --ucm-grid-columns: 2;
+  --ucm-row-height: 32px;
+  gap: 24px !important;
+}
+
+#ucm-main-dialog,
+#ucm-edit-dialog,
+#ucm-confirm-dialog {
+  background-color: #fff0f5 !important;
+  background-image: radial-gradient(#ffb7c5 20%, transparent 20%),
+    radial-gradient(#ffb7c5 20%, transparent 20%) !important;
+  background-size: 20px 20px !important;
+  background-position: 0 0, 10px 10px !important;
+  border: 1px solid #ff69b4 !important;
+  border-radius: 24px !important;
+  box-shadow: 0 10px 30px rgba(255, 105, 180, 0.5) !important;
+  color: #5e4950 !important;
+}
+
+#ucm-main-dialog .ucm-form > div[style*="display: flex"] {
+  margin-top: 10px !important;
+  padding-top: 10px !important;
+  border-top: 1px dashed #ffb7c5 !important;
+}
+
+#ucm-main-dialog .ucm-item {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border: 1px solid #ffc0cb !important;
+  border-radius: 16px !important;
+  padding: 6px 10px !important;
+  will-change: transform !important;
+}
+
+#ucm-main-dialog .ucm-item:hover {
+  border-color: #ff69b4 !important;
+}
+
+#ucm-main-dialog .ucm-label {
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+}
+
+#ucm-main-dialog button,
+#ucm-edit-dialog button,
+#ucm-confirm-dialog button {
+  appearance: none !important;
+  background: rgba(255, 240, 245, 0.9) !important;
+  border: 1px dotted #ffb7c5 !important;
+  box-shadow: 0 2px 0 #db4c97 !important;
+  color: #5e4950 !important;
+  border-radius: 20px !important;
+  padding: 5px 12px !important;
+  font-weight: bold !important;
+  transition: all 0.2s ease !important;
+  cursor: pointer !important;
+}
+
+#ucm-main-dialog button:hover,
+#ucm-edit-dialog button:hover,
+#ucm-confirm-dialog button:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 5px 0 #db4c97 !important;
+}
+
+#ucm-main-dialog button:active,
+#ucm-edit-dialog button:active,
+#ucm-confirm-dialog button:active {
+  transform: translateY(2px) !important;
+  box-shadow: 0 2px 0 #db4c97 !important;
+}
+
+#ucm-main-dialog .ucm-edit-btn,
+#ucm-main-dialog .ucm-delete-btn {
+  font-size: 0 !important;
+  width: 28px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  min-width: 28px !important;
+  margin-left: 5px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+#ucm-main-dialog .ucm-edit-btn::before,
+#ucm-main-dialog .ucm-delete-btn::before {
+  content: "" !important;
+  display: block !important;
+  width: 16px !important;
+  height: 16px !important;
+  background-color: #5e4950 !important;
+  mask-size: contain !important;
+  mask-repeat: no-repeat !important;
+  mask-position: center !important;
+  transform: translateZ(0) !important;
+}
+
+#ucm-main-dialog .ucm-edit-btn::before {
+  mask-image: url("chrome://global/skin/icons/edit.svg");
+}
+
+#ucm-main-dialog .ucm-delete-btn::before {
+  mask-image: url("chrome://global/skin/icons/delete.svg");
+}
+
+#ucm-edit-dialog input[type="text"],
+#ucm-edit-dialog textarea {
+  background: #fff !important;
+  border: 1px solid #ffb7c5 !important;
+  border-radius: 12px !important;
+  padding: 8px !important;
+  color: #5e4950 !important;
+}
+
+#ucm-edit-dialog input[type="text"]:focus,
+#ucm-edit-dialog textarea:focus {
+  border: 1px solid #ff69b4 !important;
+  outline: none !important;
+}
+
+#ucm-main-dialog input[type="checkbox"],
+#ucm-main-dialog input[type="radio"],
+#ucm-edit-dialog input[type="checkbox"],
+#ucm-edit-dialog input[type="radio"] {
+  accent-color: #ff69b4 !important;
+  cursor: pointer !important;
+}
