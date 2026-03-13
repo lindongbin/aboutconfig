@@ -331,6 +331,7 @@ function runUserChromeRules(win = window) {
         scriptMap.delete(key);
       }
       if (sandboxMap.has(key)) {
+        Cu.nukeSandbox(sandboxMap.get(key));
         sandboxMap.delete(key);
       }
     } else if (type === 'css' && styleMap.has(key)) {
@@ -350,26 +351,33 @@ function runUserChromeRules(win = window) {
         return match.replace(path, `resource://${ucr}/${ucr}/${key}/${cleanPath}`);
       });
       if (rule.type === 'js') {
-        const sandbox = Cu.Sandbox(window, {
-          sandboxPrototype: window,
-          wantXrays: false,
-          sandboxName: `UserChrome Rule: ${rule.label}`
-        });
-        if (hasDeps) {
-          const tempFile = chromeDir.clone();
-          tempFile.append(`_${key}.mjs`);
-          await IOUtils.writeUTF8(tempFile.path, code);
-          uri = Services.io.newURI(`resource://${ucr}/_${key}.mjs`);
-          Cu.evalInSandbox(`ChromeUtils.importESModule("${uri.spec}", {global: "current"});`, sandbox);
-          await IOUtils.remove(tempFile.path);
-        } else {
+        try {
+          const sandbox = Cu.Sandbox(window, {
+            sandboxPrototype: window,
+            sameZoneAs: window,
+            sandboxName: `UserChrome Rule: ${rule.label}`
+          });
           sandboxMap.set(key, sandbox);
-          const result = Cu.evalInSandbox(code, sandbox);
-          const cleanupFn = typeof result === "function" ? result
-            : Object.values(result ?? {}).find(v => typeof v === "function") ?? null;
-          if (cleanupFn) {
-            scriptMap.set(key, { cleanup: cleanupFn });
+          if (hasDeps) {
+            const tempFile = chromeDir.clone();
+            tempFile.append(`_${key}.mjs`);
+            try {
+              await IOUtils.writeUTF8(tempFile.path, code);
+              uri = Services.io.newURI(`resource://${ucr}/_${key}.mjs`);
+              Cu.evalInSandbox(`ChromeUtils.importESModule("${uri.spec}", {global: "current"});`, sandbox);
+            } finally {
+              await IOUtils.remove(tempFile.path);
+            }
+          } else {
+            const result = Cu.evalInSandbox(code, sandbox);
+            const cleanupFn = typeof result === "function" ? result
+              : Object.values(result ?? {}).find(v => typeof v === "function") ?? null;
+            if (cleanupFn) {
+              scriptMap.set(key, { cleanup: cleanupFn });
+            }
           }
+        } catch (e) {
+          Cu.reportError(`${rule.label}: ${e}`);
         }
       } else if (rule.type === 'css') {
         code = code.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, url) => {
@@ -803,7 +811,7 @@ function runUserChromeRules(win = window) {
 
   window.addEventListener('unload', () => {
     for (const key of styleMap.keys()) cleanupRule(key, 'css');
-    for (const key of scriptMap.keys()) cleanupRule(key, 'js');
+    for (const key of sandboxMap.keys()) cleanupRule(key, 'js');
     sandboxMap.clear();
     itemElements.clear();
     mainDialog?.remove();
