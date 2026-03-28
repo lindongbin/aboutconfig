@@ -32,13 +32,10 @@
 
         const abortController = new AbortController();
         const { signal } = abortController;
-        const searchSvc = Services.search;
+        const searchSvc = Services.search ?? ChromeUtils.importESModule("moz-src:///toolkit/components/search/SearchService.sys.mjs").SearchService;
 
         const iconCache = new Map();
-        let searchbar = document.getElementById('searchbar');
-        let searchIcon = searchbar?.querySelector('.searchbar-search-icon');
-        let textbox = searchbar?.querySelector('.searchbar-textbox');
-        let goBtn = searchbar?.querySelector('.search-go-button');
+        let searchbar, searchIcon, textbox, goBtn;
         let urlbar = document.getElementById('urlbar');
         let ctxMenu = document.getElementById('context-searchselect');
 
@@ -55,6 +52,18 @@
         let original_recordSearch = null;
         let originalHandleSearchCommandWhere = null;
         let original_updatePlaceholder = null;
+
+        function getSearchElements() {
+            const isNew = Services.prefs.getBoolPref("browser.search.widget.new", false);
+            const searchbarId = isNew ? 'searchbar-new' : 'searchbar';
+            const searchIconSelector = isNew ? '.searchmode-switcher-icon' : '.searchbar-search-icon';
+            const textboxSelector = isNew ? '.urlbar-input' : '.searchbar-textbox';
+            const goBtnSelector = isNew ? '.urlbar-go-button' : '.search-go-button';
+            searchbar = document.getElementById(searchbarId);
+            searchIcon = searchbar?.querySelector(searchIconSelector);
+            textbox = searchbar?.querySelector(textboxSelector);
+            goBtn = searchbar?.querySelector(goBtnSelector);
+        };
 
         function isUrlbarHasContent() {
             if (!gURLBar) return false;
@@ -78,7 +87,7 @@
                     ? cachedEngines[0]
                     : cachedEngines.find(e => e.name === cfg.defaultEngineName);
                 if (targetEngine) {
-                    await searchSvc.setDefault(targetEngine, Ci.nsISearchService.CHANGE_REASON_USER);
+                    await searchSvc.setDefault(targetEngine, searchSvc.CHANGE_REASON_USER);
                 }
             }
             if ((cfg.clearSearchboxOnReset || cfg.lockEngineMode) && textbox) textbox.value = '';
@@ -144,7 +153,9 @@
 
             currentEngineIndex = newIdx;
 
-            await searchSvc.setDefault(cachedEngines[newIdx], Ci.nsISearchService.CHANGE_REASON_USER);
+            await searchSvc.setDefault(cachedEngines[newIdx], searchSvc.CHANGE_REASON_USER);
+
+            if (event.currentTarget === ctxMenu) ctxMenu.engine = cachedEngines[newIdx];
 
             if (event.currentTarget.id === "urlbar" && gURLBar && gURLBar.value) {
                 gURLBar.search?.(gURLBar.value);
@@ -185,10 +196,7 @@
         }
 
         function handleAfterCustomization() {
-            searchbar = document.getElementById('searchbar');
-            searchIcon = searchbar?.querySelector('.searchbar-search-icon');
-            textbox = searchbar?.querySelector('.searchbar-textbox');
-            goBtn = searchbar?.querySelector('.search-go-button');
+            getSearchElements();
             setTimeout(() => {
                 lastEngineName = null;
                 if (goBtn) goBtn.removeAttribute("hidden");
@@ -316,6 +324,8 @@
             window.addEventListener('resize', handleWindowResize, { signal });
             window.addEventListener('unload', cleanup, { signal });
         }
+
+        getSearchElements();
 
         if (cfg.resetEngineAfterSearch) {
             if (gURLBar && gURLBar._recordSearch) {
