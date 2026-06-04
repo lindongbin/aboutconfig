@@ -41,30 +41,32 @@
     const popup = document.getElementById('historyMenuPopup');
     if (popup) bindHistoryHandlers(popup, 'menuitem');
 
-    const observer = new MutationObserver(muts => {
-        for (const mut of muts) {
-            for (const node of mut.addedNodes) {
-                if (node.nodeType === Node.ELEMENT_NODE && node.id === 'PanelUI-history') {
-                    bindHistoryHandlers(node, 'menuitem, toolbarbutton', true);
-                    observer.disconnect();
-                    return;
+    const historyPanelView = document.getElementById('PanelUI-history');
+    if (historyPanelView) {
+        bindHistoryHandlers(historyPanelView, 'menuitem, toolbarbutton', true);
+    } else {
+        const observer = new MutationObserver(muts => {
+            for (const mut of muts) {
+                for (const node of mut.addedNodes) {
+                    if (node.nodeType === Node.ELEMENT_NODE && node.id === 'PanelUI-history') {
+                        bindHistoryHandlers(node, 'menuitem, toolbarbutton', true);
+                        observer.disconnect();
+                        return;
+                    }
                 }
             }
-        }
-    });
+        });
+    
+        const mainPopupSet = document.getElementById('mainPopupSet');
+        if (mainPopupSet) observer.observe(mainPopupSet, { childList: true, subtree: true });
 
-    ['appMenu-popup', 'nav-bar'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) observer.observe(el, { childList: true, subtree: true });
-    });
-
-    window.addEventListener('beforeunload', () => observer.disconnect(), { signal });
+        signal.addEventListener('abort', () => observer.disconnect());
+    }
 
     return {
         cleanup: () => {
             abortController.abort();
             BrowserUtils.whereToOpenLink = originalWhereToOpenLink;
-            observer.disconnect();
         }
     };
 })();
