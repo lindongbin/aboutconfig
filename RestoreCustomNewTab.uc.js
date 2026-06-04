@@ -3,8 +3,6 @@
 
   const PREF_NAME = 'browser.newtab.url';
   const NEWTAB_MODE_PREF = 'browser.newtab.mode';
-  const DEFAULT_URL = 'about:newtab';
-  const NEWTAB_MODE_CUSTOM = "2";
 
   const { AboutNewTab } = ChromeUtils.importESModule(
     'resource:///modules/AboutNewTab.sys.mjs'
@@ -15,7 +13,8 @@
   function updateNewTabURL() {
     const mode = Services.prefs.getIntPref(NEWTAB_MODE_PREF, -1);
     if (mode === 2) {
-      const url = Services.prefs.getStringPref(PREF_NAME, '').trim() || DEFAULT_URL;
+      const url = Services.prefs.getStringPref(PREF_NAME, '').trim();
+      if (!url) return;
       AboutNewTab.newTabURL = url;
       AboutNewTab.willNotifyUser = true;
     } else {
@@ -25,10 +24,6 @@
   }
 
   function createCustomUI(doc) {
-    const customItem = doc.createXULElement('menuitem');
-    customItem.setAttribute('value', NEWTAB_MODE_CUSTOM);
-    customItem.setAttribute('label', '自定义网址…');
-
     const customSettings = doc.createXULElement('hbox');
     customSettings.id = 'newTabCustomSettings';
     customSettings.setAttribute('align', 'center');
@@ -44,58 +39,89 @@
 
     customSettings.appendChild(input);
 
-    return { customItem, customSettings, input };
+    return { customSettings, input };
   }
 
-  function initPreferencesPage(doc, win, signal) {
-    const newTabMode = doc.getElementById('newTabMode');
-    if (!newTabMode || newTabMode.dataset.customModified) {
+  function initPreferencesPage(doc, win, signal, select) {
+    if (!select) {
+      select = doc.getElementById('homepageNewTabs');
+    }
+    if (!select) {
+      const mo = new MutationObserver(() => {
+        const s = doc.getElementById('homepageNewTabs');
+        if (s) {
+          mo.disconnect();
+          initPreferencesPage(doc, win, signal, s);
+        }
+      });
+      mo.observe(doc.documentElement, { childList: true, subtree: true });
+      signal.addEventListener('abort', () => mo.disconnect(), { once: true });
       return;
     }
 
-    newTabMode.dataset.customModified = 'true';
+    if (select.dataset.customModified) return;
+    select.dataset.customModified = 'true';
 
-    const menupopup = newTabMode.querySelector('menupopup');
-    if (!menupopup) return;
+    const setting = win.Preferences?.getSetting?.('homepageNewTabs');
+    if (!setting) return;
 
-    const { customItem, customSettings, input } = createCustomUI(doc);
+    const { customSettings, input } = createCustomUI(doc);
+    select.parentElement.insertAdjacentElement('afterend', customSettings);
 
-    const blankItem = menupopup.querySelector('[value="1"]');
-    if (blankItem) {
-      menupopup.insertBefore(customItem, blankItem);
-    } else {
-      menupopup.appendChild(customItem);
-    }
-    newTabMode.parentNode.insertBefore(customSettings, newTabMode.nextSibling);
+    const origGetCC = setting.config.getControlConfig;
+    setting.config.getControlConfig = function(config) {
+      const result = origGetCC.call(this, config);
+      return {
+        ...result,
+        options: [...result.options, { value: 'custom', label: '自定义网址…' }],
+      };
+    };
 
-    newTabMode.addEventListener('command', (e) => {
-      const isCustom = e.target.value === NEWTAB_MODE_CUSTOM;
-      customSettings.hidden = !isCustom;
+    const origGet = setting.config.get;
+    setting.config.get = function(prefVal) {
+      if (Services.prefs.getIntPref(NEWTAB_MODE_PREF, -1) === 2) return 'custom';
+      return origGet.call(this, prefVal);
+    };
 
-      if (isCustom) {
-        const savedUrl = Services.prefs.getStringPref(PREF_NAME, '').trim();
-        if (savedUrl) input.value = savedUrl;
+    const origSet = setting.config.set;
+    setting.config.set = function(inputVal) {
+      if (inputVal === 'custom') {
         Services.prefs.setIntPref(NEWTAB_MODE_PREF, 2);
-        const url = input.value || DEFAULT_URL;
-        Services.prefs.setStringPref(PREF_NAME, url);
-      } else {
-        Services.prefs.clearUserPref(NEWTAB_MODE_PREF);
+        return true;
       }
-      updateNewTabURL();
+      Services.prefs.clearUserPref(NEWTAB_MODE_PREF);
+      return origSet.call(this, inputVal);
+    };
+
+    setting.emit('change');
+
+    requestAnimationFrame(() => {
+      const customOpt = select.querySelector('moz-option[value="custom"]');
+      if (customOpt) {
+        customOpt.removeAttribute('data-l10n-attrs');
+        customOpt.removeAttribute('data-l10n-id');
+        customOpt.label = '自定义网址…';
+      }
+
+      if (Services.prefs.getIntPref(NEWTAB_MODE_PREF, -1) === 2) {
+        select.value = 'custom';
+        customSettings.hidden = false;
+        input.value = Services.prefs.getStringPref(PREF_NAME, '');
+      }
+    });
+
+    select.addEventListener('change', () => {
+      if (select.value === 'custom') {
+        customSettings.hidden = false;
+        input.value = Services.prefs.getStringPref(PREF_NAME, '');
+      } else {
+        customSettings.hidden = true;
+      }
     }, { signal });
 
-    input.addEventListener('change', (e) => {
-      const url = e.target.value.trim() || DEFAULT_URL;
-      Services.prefs.setStringPref(PREF_NAME, url);
-      updateNewTabURL();
+    input.addEventListener('change', () => {
+      Services.prefs.setStringPref(PREF_NAME, input.value.trim());
     }, { signal });
-
-    const mode = Services.prefs.getIntPref(NEWTAB_MODE_PREF, -1);
-    if (mode === 2) {
-      newTabMode.value = NEWTAB_MODE_CUSTOM;
-      customSettings.hidden = false;
-      input.value = Services.prefs.getStringPref(PREF_NAME, DEFAULT_URL);
-    }
   }
 
   function handlePreferencesPage(win) {
