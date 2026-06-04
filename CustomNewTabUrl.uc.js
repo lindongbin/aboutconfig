@@ -14,7 +14,11 @@
       url = DEFAULT_URL;
       Services.prefs.setStringPref(PREF_NAME, url);
     }
-    AboutNewTab.newTabURL = url;
+    if (url === 'about:newtab' || url === 'about:home') {
+      AboutNewTab.resetNewTabURL();
+    } else {
+      AboutNewTab.newTabURL = url;
+    }
   }
 
   Services.prefs.addObserver(PREF_NAME, setNewTabURL);
