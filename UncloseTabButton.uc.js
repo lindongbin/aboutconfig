@@ -88,7 +88,7 @@
     updateItems = () => {
       this.doc.defaultView.requestAnimationFrame(() => {
         const fragment = this.doc.createDocumentFragment();
-        const tabs = SessionStore.getClosedTabData(this.win);
+        const tabs = SessionStore.getClosedTabData({ sourceWindow: this.win });
         if (!tabs.length) {
           fragment.appendChild(createXULElement(this.doc, 'menuitem', { label: '没有最近关闭的标签页', disabled: true }));
         } else {
@@ -133,7 +133,7 @@
           rotate: true,
         });
         btn.addEventListener('click', e => {
-          if (e.button === 0) SessionStore.undoCloseTab(this.doc.defaultView, 0);
+          if (e.button === 0) SessionStore.undoCloseTab({ sourceWindow: this.doc.defaultView }, 0);
         }, { signal });
       }
       btn.addEventListener('contextmenu', e => {
