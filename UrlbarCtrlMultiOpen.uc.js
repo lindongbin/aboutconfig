@@ -1,9 +1,9 @@
 (function () {
     'use strict';
 
-    const originalWhereToOpen = gURLBar._whereToOpen;
+    const originalWhereToOpen = gURLBar.controller.whereToOpen;
 
-    gURLBar._whereToOpen = function (event) {
+    gURLBar.controller.whereToOpen = function (event) {
         if (event?.ctrlKey) {
             const view = this.view;
             if (view?.close) {
@@ -16,5 +16,5 @@
         return originalWhereToOpen.call(this, event);
     };
 
-    return { cleanup: () => { gURLBar._whereToOpen = originalWhereToOpen; } };
+    return { cleanup: () => { gURLBar.controller.whereToOpen = originalWhereToOpen; } };
 })();
